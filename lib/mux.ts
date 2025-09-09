@@ -5,5 +5,5 @@ const mux = new Mux({
   tokenSecret: process.env.MUX_TOKEN_SECRET!
 });
 
-// Use the grouped client (lowercase)
+// use grouped client
 export const video = mux.video;
