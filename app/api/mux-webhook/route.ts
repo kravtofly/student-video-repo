@@ -1,18 +1,27 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
-// Verify using raw body in Vercel: route segment config below
-export const config = { api: { bodyParser: false } };
 
-async function getRawBody(req: Request) { return Buffer.from(await req.arrayBuffer()); }
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic"; // webhooks should not be cached
 
 export async function POST(req: NextRequest) {
-  const raw = await getRawBody(req as any);
-  const sig = req.headers.get("mux-signature"); // TODO: verify with MUX_WEBHOOK_SECRET
+  // Raw body is available in App Router—no special config needed
+  const raw = Buffer.from(await req.arrayBuffer());
 
-  const evt = JSON.parse(raw.toString());
+  // TODO: verify Mux signature in req.headers.get("mux-signature")
+  // using process.env.MUX_WEBHOOK_SECRET
+
+  let evt: any;
+  try {
+    evt = JSON.parse(raw.toString());
+  } catch {
+    return NextResponse.json({ error: "invalid json" }, { status: 400 });
+  }
+
   if (evt.type === "video.asset.ready") {
     const asset = evt.data;
-    await supabaseAdmin.from("videos")
+    await supabaseAdmin
+      .from("videos")
       .update({
         status: "ready",
         mux_asset_id: asset.id,
@@ -20,10 +29,12 @@ export async function POST(req: NextRequest) {
         duration_seconds: asset.duration
       })
       .eq("upload_id", asset.upload_id);
-  }
-  if (evt.type === "video.asset.errored") {
-    await supabaseAdmin.from("videos").update({ status: "errored" })
+  } else if (evt.type === "video.asset.errored") {
+    await supabaseAdmin
+      .from("videos")
+      .update({ status: "errored" })
       .eq("upload_id", evt.data.upload_id);
   }
+
   return NextResponse.json({ ok: true });
 }
