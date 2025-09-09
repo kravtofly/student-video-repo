@@ -1,8 +1,23 @@
-"dependencies": {
-  "@mux/mux-node": "^8.5.0",
-  "@supabase/supabase-js": "^2.45.0",
-  "jsonwebtoken": "^9.0.2",
-  "next": "14.2.5",
-  "react": "18.3.1",
-  "react-dom": "18.3.1"
+{
+  "name": "student-video-repo",
+  "private": true,
+  "version": "0.0.1",
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start"
+  },
+  "dependencies": {
+    "@mux/mux-node": "^8.5.0",
+    "@supabase/supabase-js": "^2.45.0",
+    "jsonwebtoken": "^9.0.2",
+    "next": "14.2.5",
+    "react": "18.3.1",
+    "react-dom": "18.3.1"
+  },
+  "devDependencies": {
+    "@types/jsonwebtoken": "^9.0.6",
+    "@types/node": "^20.11.30",
+    "typescript": "^5.4.0"
+  }
 }
