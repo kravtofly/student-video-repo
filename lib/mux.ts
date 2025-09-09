@@ -1,3 +1,6 @@
-import Mux from "mux-node";
-export const mux = new Mux({ tokenId: process.env.MUX_TOKEN_ID!, tokenSecret: process.env.MUX_TOKEN_SECRET! });
+import Mux from "@mux/mux-node";
+export const mux = new Mux({
+  tokenId: process.env.MUX_TOKEN_ID!,
+  tokenSecret: process.env.MUX_TOKEN_SECRET!
+});
 export const { Video } = mux;
