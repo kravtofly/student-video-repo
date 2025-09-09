@@ -1,21 +1,19 @@
 import { NextRequest, NextResponse } from "next/server";
-import { Video } from "@/lib/mux";
-import { supabaseAdmin } from "@/lib/supabase";
-// import { getUserId } from "@/lib/auth";
+import { video } from "../../../lib/mux";
+import { supabaseAdmin } from "../../../lib/supabase";
+// import { getUserId } from "../../../lib/auth";
+export const runtime = "nodejs";
 
 export async function POST(req: NextRequest) {
-  // const userId = await getUserId(); if (!userId) return NextResponse.json({error:'unauthorized'},{status:401});
-  const userId = 'REPLACE_WITH_AUTH';
+  // const userId = await getUserId(); if (!userId) return NextResponse.json({error:"unauthorized"},{status:401});
+  const userId = "REPLACE_WITH_AUTH";
   const { filename } = await req.json();
 
-  const upload = await Video.Uploads.create({
+  const upload = await video.uploads.create({
     cors_origin: "*",
-    new_asset_settings: {
-      playback_policy: ["signed"]
-    }
+    new_asset_settings: { playback_policy: ["signed"] }
   });
 
-  // Pre-create row with status 'uploading'
   await supabaseAdmin.from("videos").insert({
     owner_id: userId,
     status: "uploading",
