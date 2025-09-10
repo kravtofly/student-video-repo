@@ -19,7 +19,6 @@ function corsHeaders(req: NextRequest) {
   h.set("Access-Control-Allow-Methods", "POST, OPTIONS");
   h.set("Access-Control-Allow-Headers", "Content-Type, Authorization");
   h.set("Access-Control-Max-Age", "86400");
-  h.set("Access-Control-Allow-Credentials", "true");
   return h;
 }
 
