@@ -2,26 +2,38 @@ import { NextRequest, NextResponse } from "next/server";
 import jwt from "jsonwebtoken";
 
 export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
+
+function cors(req: NextRequest) {
+  const origin = req.headers.get("origin") ?? "*";
+  return {
+    "Access-Control-Allow-Origin": origin,
+    "Access-Control-Allow-Methods": "POST,OPTIONS",
+    "Access-Control-Allow-Headers": "Content-Type, Authorization",
+    "Access-Control-Max-Age": "86400",
+    Vary: "Origin",
+  };
+}
+
+export async function OPTIONS(req: NextRequest) {
+  return new NextResponse(null, { status: 204, headers: cors(req) });
+}
 
 export async function POST(req: NextRequest) {
-  try {
-    const { playbackId, ttl } = await req.json();
-    if (!playbackId) {
-      return NextResponse.json({ error: "missing playbackId" }, { status: 400 });
-    }
-
-    const token = jwt.sign(
-      { sub: playbackId },
-      process.env.MUX_SIGNING_KEY_SECRET!,          // secret from Mux Signing Key
-      {
-        algorithm: "HS256",
-        expiresIn: `${ttl ?? 600}s`,                // default 10 minutes
-        header: { kid: process.env.MUX_SIGNING_KEY_ID! } // key id from Mux
-      }
-    );
-
-    return NextResponse.json({ token });
-  } catch (e: any) {
-    return NextResponse.json({ error: e?.message ?? "server error" }, { status: 500 });
+  const { playbackId } = await req.json();
+  if (!playbackId) {
+    return NextResponse.json({ error: "playbackId required" }, { status: 400, headers: cors(req) });
   }
+
+  const token = jwt.sign(
+    { sub: playbackId },
+    process.env.MUX_SIGNING_KEY_SECRET!,           // secret
+    {
+      algorithm: "HS256",
+      expiresIn: "10m",
+      header: { kid: process.env.MUX_SIGNING_KEY_ID! }, // key id
+    }
+  );
+
+  return NextResponse.json({ token }, { headers: cors(req) });
 }
