@@ -6,14 +6,20 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic"; // no caching
 
 function corsHeaders(req: NextRequest) {
-  const origin = req.headers.get("origin") ?? "*";
-  const reqHeaders = req.headers.get("access-control-request-headers") ?? "content-type";
+  const origin = req.headers.get("origin");
   const h = new Headers();
-  h.set("Access-Control-Allow-Origin", origin); // echo origin
-  h.set("Access-Control-Allow-Methods", "POST,OPTIONS");
-  h.set("Access-Control-Allow-Headers", reqHeaders);
+  
+  // Allow specific origins or all origins for development
+  if (origin === "https://www.kravtofly.com" || process.env.NODE_ENV === "development") {
+    h.set("Access-Control-Allow-Origin", origin || "*");
+  } else {
+    h.set("Access-Control-Allow-Origin", "*"); // or be more restrictive
+  }
+  
+  h.set("Access-Control-Allow-Methods", "POST, OPTIONS");
+  h.set("Access-Control-Allow-Headers", "Content-Type, Authorization");
   h.set("Access-Control-Max-Age", "86400");
-  h.set("Vary", "Origin, Access-Control-Request-Headers");
+  h.set("Access-Control-Allow-Credentials", "true");
   return h;
 }
 
