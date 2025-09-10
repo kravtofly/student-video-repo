@@ -1,37 +1,21 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest } from "next/server";
 import { video } from "../../../lib/mux";
 import { supabaseAdmin } from "../../../lib/supabase";
 export const runtime = "nodejs";
 
-const allowed = (process.env.ALLOWED_ORIGINS || "")
-  .split(",")
-  .map(s => s.trim());
+// --- TEMP permissive CORS ---
+const CORS = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Methods": "POST,OPTIONS",
+  "Access-Control-Allow-Headers": "*",
+  "Access-Control-Max-Age": "86400",
+};
 
-function cors(origin: string) {
-  const h = new Headers();
-  if (allowed.includes(origin) || origin.endsWith(".vercel.app")) {
-    h.set("Access-Control-Allow-Origin", origin);
-  } else {
-    h.set("Access-Control-Allow-Origin", "*"); // temp fallback to unblock
-  }
-  h.set("Access-Control-Allow-Methods", "POST,OPTIONS");
-  h.set("Access-Control-Allow-Headers", "Content-Type, Authorization");
-  h.set("Access-Control-Max-Age", "86400");
-  h.set("Vary", "Origin");
-  return h;
-}
-
-export async function OPTIONS(req: NextRequest) {
-  return new NextResponse(null, {
-    status: 204,
-    headers: cors(req.headers.get("origin") || "")
-  });
+export async function OPTIONS() {
+  return new Response(null, { status: 204, headers: CORS });
 }
 
 export async function POST(req: NextRequest) {
-  const origin = req.headers.get("origin") || "";
-  const headers = cors(origin);
-
   const { filename, userId } = await req.json();
 
   const upload = await video.uploads.create({
@@ -46,5 +30,5 @@ export async function POST(req: NextRequest) {
     filename
   });
 
-  return NextResponse.json({ uploadUrl: upload.url, uploadId: upload.id }, { headers });
+  return Response.json({ uploadUrl: upload.url, uploadId: upload.id }, { headers: CORS });
 }
