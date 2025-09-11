@@ -1,9 +1,10 @@
+// lib/mux.ts
 import Mux from "@mux/mux-node";
 
-const mux = new Mux({
+export const mux = new Mux({
   tokenId: process.env.MUX_TOKEN_ID!,
-  tokenSecret: process.env.MUX_TOKEN_SECRET!
+  tokenSecret: process.env.MUX_TOKEN_SECRET!,
 });
 
-// use grouped client
-export const video = mux.video;
+export const { video, webhooks } = mux;
+
