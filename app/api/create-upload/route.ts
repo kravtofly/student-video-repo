@@ -38,9 +38,12 @@ export async function POST(req: NextRequest) {
     const { filename, userId } = await req.json();
 
     const upload = await video.uploads.create({
-      cors_origin: "*",
-      new_asset_settings: { playback_policy: ["signed"] },
-    });
+  cors_origin: "https://www.kravtofly.com",
+  new_asset_settings: {
+    playback_policy: ["signed"],                 // we want signed playback
+    passthrough: JSON.stringify({ filename, userId }), // carry metadata to the webhook
+  },
+});
 
     await supabaseAdmin.from("videos").insert({
       owner_id: userId || "REPLACE_WITH_AUTH",
