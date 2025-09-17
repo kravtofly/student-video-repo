@@ -1,9 +1,9 @@
-export const metadata = { title: "Krāv SVR" };
+export const metadata = { title: "Kräv" };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="en">
-      <body>{children}</body>
+      <body style={{ fontFamily: "system-ui, sans-serif" }}>{children}</body>
     </html>
   );
 }
