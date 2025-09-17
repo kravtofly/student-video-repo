@@ -1,6 +1,6 @@
 import type { NextRequest } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
-import Mux from "@mux/mux-node";
+import Mux, { Webhooks } from "@mux/mux-node";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -10,8 +10,8 @@ const mux = new Mux({
   tokenSecret: process.env.MUX_TOKEN_SECRET!,
 });
 
-// Simple CORS for Mux webhook POSTs
-function corsHeaders(req: NextRequest) {
+// CORS (Mux calls your webhook server-to-server)
+function corsHeaders(_: NextRequest) {
   const h = new Headers();
   h.set("Access-Control-Allow-Origin", "*");
   h.set("Access-Control-Allow-Methods", "GET,POST,OPTIONS");
@@ -28,49 +28,47 @@ export async function POST(req: NextRequest) {
   const headers = corsHeaders(req);
 
   try {
-    // Read raw body for signature verification
+    // 1) Read raw body + signature header
     const raw = await req.text();
-    const sig = req.headers.get("mux-signature") || "";
+    const sig = req.headers.get("mux-signature") ?? "";
 
-    // Verify webhook (required)
-    Mux.Webhooks.verifySignature(
-      raw,
-      sig,
-      process.env.MUX_WEBHOOK_SECRET!
-    );
+    // 2) Verify using the named export
+    Webhooks.verifySignature(raw, sig, process.env.MUX_WEBHOOK_SECRET!);
 
+    // 3) Parse the event
     const evt = JSON.parse(raw);
 
-    // We’ll upsert rows at key lifecycle events
+    // Helper to safely parse passthrough JSON
+    const safeParse = (v: any) => {
+      try { return typeof v === "string" ? JSON.parse(v) : v; } catch { return null; }
+    };
+
+    // 4) Upsert rows for the interesting events
     if (evt?.type === "video.asset.created") {
       const a = evt.data;
-      const passthrough = safeParse(a.passthrough);
+      const pt = safeParse(a.passthrough);
       await supabaseAdmin.from("videos").upsert({
         upload_id: a.upload_id || null,
         mux_asset_id: a.id,
-        filename: passthrough?.filename || null,
-        owner_id: passthrough?.userId || null,
-        title: passthrough?.title || passthrough?.filename || null,
+        filename: pt?.filename || null,
+        owner_id: pt?.userId || null,
+        title: pt?.title || pt?.filename || null,
         status: "processing",
       }, { onConflict: "mux_asset_id" });
     }
 
     if (evt?.type === "video.asset.ready") {
       const a = evt.data;
-      const passthrough = safeParse(a.passthrough);
-
-      // pick the signed playback id (that’s all we create)
+      const pt = safeParse(a.passthrough);
       const signedPlayback = (a.playback_ids || []).find((p: any) => p.policy === "signed");
-      const playbackId = signedPlayback?.id || null;
-
       await supabaseAdmin.from("videos").upsert({
         upload_id: a.upload_id || null,
         mux_asset_id: a.id,
-        filename: passthrough?.filename || null,
-        owner_id: passthrough?.userId || null,
-        title: passthrough?.title || passthrough?.filename || null,
+        filename: pt?.filename || null,
+        owner_id: pt?.userId || null,
+        title: pt?.title || pt?.filename || null,
         duration: a.duration ?? null,
-        playback_id: playbackId,
+        playback_id: signedPlayback?.id || null,
         status: "ready",
       }, { onConflict: "mux_asset_id" });
     }
@@ -88,8 +86,4 @@ export async function POST(req: NextRequest) {
     console.error("mux-webhook error:", err?.message || err);
     return new Response(JSON.stringify({ ok: false }), { status: 400, headers });
   }
-}
-
-function safeParse(s: any) {
-  try { return typeof s === "string" ? JSON.parse(s) : s; } catch { return null; }
 }
