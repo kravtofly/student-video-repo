@@ -1,10 +1,10 @@
 // lib/mux.ts
 import Mux from "@mux/mux-node";
 
-export const mux = new Mux({
+const mux = new Mux({
   tokenId: process.env.MUX_TOKEN_ID!,
-  tokenSecret: process.env.MUX_TOKEN_SECRET!,
+  tokenSecret: process.env.MUX_TOKEN_SECRET!
 });
 
-export const { video, webhooks } = mux;
-
+export const video = mux.video;         // grouped video client
+export const Webhooks = Mux.Webhooks;   // for signature verification
