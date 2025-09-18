@@ -36,7 +36,7 @@ export async function POST(req: NextRequest) {
   const secret = process.env.MUX_WEBHOOK_SECRET!;
 
   try {
-    // ✅ Correct method is verifySignature for this SDK version
+    // ✅ Correct for this SDK version
     Mux.Webhooks.verifySignature(raw, sig, secret);
 
     const evt = JSON.parse(raw) as { type: string; data: any };
@@ -44,11 +44,7 @@ export async function POST(req: NextRequest) {
 
     if (type === "video.asset.created") {
       let meta: any = {};
-      try {
-        meta = data.passthrough ? JSON.parse(data.passthrough) : {};
-      } catch {
-        meta = {};
-      }
+      try { meta = data.passthrough ? JSON.parse(data.passthrough) : {}; } catch {}
 
       await supabaseAdmin.from("videos").upsert(
         {
@@ -70,10 +66,7 @@ export async function POST(req: NextRequest) {
 
       await supabaseAdmin
         .from("videos")
-        .update({
-          status: "ready",
-          playback_id: playbackId ?? null,
-        })
+        .update({ status: "ready", playback_id: playbackId ?? null })
         .eq("asset_id", data.id);
 
       return ok({ ok: true, handled: "asset.ready" });
