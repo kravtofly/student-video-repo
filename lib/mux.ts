@@ -3,8 +3,8 @@ import Mux from "@mux/mux-node";
 
 const mux = new Mux({
   tokenId: process.env.MUX_TOKEN_ID!,
-  tokenSecret: process.env.MUX_TOKEN_SECRET!
+  tokenSecret: process.env.MUX_TOKEN_SECRET!,
 });
 
-export const video = mux.video;         // grouped video client
-export const Webhooks = Mux.Webhooks;   // for signature verification
+export const video = mux.video;          // grouped video client
+export const webhooks = Mux.Webhooks;    // static helper for webhook verification
