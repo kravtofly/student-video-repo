@@ -1,4 +1,3 @@
-// app/coach/page.tsx
 export default function Coach() {
   return (
     <main style={{ padding: "2rem" }}>
