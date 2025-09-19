@@ -26,12 +26,8 @@ export async function POST(req: Request) {
     .order("created_at", { ascending: false })
     .limit(50);
 
-  if (error) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
-  }
-  if (!pending?.length) {
-    return NextResponse.json({ updated: 0, details: [] }, { status: 200 });
-  }
+  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+  if (!pending?.length) return NextResponse.json({ updated: 0, details: [] }, { status: 200 });
 
   const details: Array<Record<string, any>> = [];
   let updated = 0;
@@ -40,22 +36,22 @@ export async function POST(req: Request) {
     const uploadId = row.upload_id as string;
 
     try {
-      // 1) Look up the upload to discover asset_id (if upload has completed)
+      // 1) Look up the upload to discover asset_id (once complete)
       const upload = await video.uploads.retrieve(uploadId);
       const assetId = (upload as any)?.asset_id ?? null;
       if (!assetId) {
-        details.push({ id: row.id, uploadId, status: upload?.status ?? "unknown", note: "asset not created yet" });
+        details.push({ id: row.id, uploadId, status: (upload as any)?.status ?? "unknown", note: "asset not created yet" });
         continue;
       }
 
-      // 2) Fetch asset to see current playback IDs
+      // 2) Fetch the asset; see if a signed playback ID already exists
       const asset = await video.assets.retrieve(assetId);
       let signedPlaybackId =
         (asset as any)?.playback_ids?.find((p: any) => p.policy === "signed")?.id ?? null;
 
-      // 3) If no signed playback id exists, create one
+      // 3) If no signed playback id, create one on the asset
       if (!signedPlaybackId) {
-        const pb = await video.playbackIds.create(assetId, { policy: "signed" });
+        const pb = await video.assets.createPlaybackId(assetId, { policy: "signed" });
         signedPlaybackId = (pb as any).id;
       }
 
