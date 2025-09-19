@@ -1,0 +1,12 @@
+{
+  "crons": [
+    {
+      "path": "/api/admin/reconcile",
+      "schedule": "*/10 * * * *",
+      "headers": {
+        "x-admin-key": "@RECONCILE_SECRET"
+      },
+      "method": "POST"
+    }
+  ]
+}
