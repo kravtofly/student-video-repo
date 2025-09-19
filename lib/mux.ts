@@ -7,4 +7,6 @@ const mux = new Mux({
 });
 
 export const video = mux.video;          // grouped video client
-export const webhooks = Mux.Webhooks;    // static helper for webhook verification
+
+// Export the full Mux object for webhook verification access
+export { Mux };
