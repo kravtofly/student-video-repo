@@ -14,32 +14,20 @@ const asUUID = (v?: string | null) =>
 // Handle the Mux SDK differences across versions (verifySignature vs verifyHeader vs verify)
 function verifyMuxWebhook(raw: string, signature: string, secret: string) {
   try {
-    // Try the new API first (v8+)
-    if (Mux.Webhooks && typeof Mux.Webhooks.verifySignature === "function") {
-      return Mux.Webhooks.verifySignature(raw, signature, secret);
+    // Cast to any to avoid TypeScript issues with dynamic property access
+    const webhooks = (Mux as any).Webhooks;
+    
+    if (!webhooks) {
+      throw new Error("Mux.Webhooks not found in SDK");
     }
     
-    // Try older API (v7)
-    if (Mux.Webhooks && typeof Mux.Webhooks.verifyHeader === "function") {
-      return Mux.Webhooks.verifyHeader(raw, signature, secret);
-    }
+    // Try different method names that exist across versions
+    const methods = ['verifySignature', 'verifyHeader', 'verify'];
     
-    // Try even older API (v6 and below)
-    if (Mux.Webhooks && typeof Mux.Webhooks.verify === "function") {
-      return Mux.Webhooks.verify(raw, signature, secret);
-    }
-    
-    // If no Webhooks object, try direct import pattern
-    const { Webhooks } = Mux as any;
-    if (Webhooks) {
-      if (typeof Webhooks.verifySignature === "function") {
-        return Webhooks.verifySignature(raw, signature, secret);
-      }
-      if (typeof Webhooks.verifyHeader === "function") {
-        return Webhooks.verifyHeader(raw, signature, secret);
-      }
-      if (typeof Webhooks.verify === "function") {
-        return Webhooks.verify(raw, signature, secret);
+    for (const method of methods) {
+      if (typeof webhooks[method] === "function") {
+        console.log(`Using Mux webhook verification method: ${method}`);
+        return webhooks[method](raw, signature, secret);
       }
     }
     
