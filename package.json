@@ -2,24 +2,24 @@
   "name": "student-video-repo",
   "private": true,
   "version": "0.0.1",
+  "engines": { "node": ">=18.17.0" },
   "scripts": {
     "dev": "next dev",
     "build": "next build",
     "start": "next start"
   },
   "dependencies": {
-    "@mux/mux-node": "^8.5.0",
-    "@supabase/supabase-js": "^2.45.0",
-    "jsonwebtoken": "^9.0.2",
-    "next": "14.2.5",
+    "next": "14.2.10",
     "react": "18.3.1",
-    "react-dom": "18.3.1"
+    "react-dom": "18.3.1",
+    "@mux/mux-node": "12.7.0",
+    "@mux/mux-player-react": "3.5.3",
+    "@supabase/supabase-js": "2.57.4"
   },
   "devDependencies": {
-    "@types/jsonwebtoken": "^9.0.6",
-    "@types/node": "^20.11.30",
-    "@types/react": "^18.2.74",
-    "@types/react-dom": "^18.2.24",
-    "typescript": "^5.4.0"
+    "typescript": "5.6.2",
+    "@types/react": "18.2.74",
+    "@types/react-dom": "18.2.24",
+    "@types/node": "20.11.30"
   }
 }
