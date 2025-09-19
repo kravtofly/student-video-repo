@@ -26,7 +26,18 @@ function cors(req: NextRequest) {
 
 function signMuxPlaybackToken(playbackId: string) {
   const kid = process.env.MUX_SIGNING_KEY_ID!;
-  const key = process.env.MUX_SIGNING_KEY_SECRET! as Secret; // full PEM private key string
+  let key = process.env.MUX_SIGNING_KEY_SECRET!;
+  
+  // The key might be base64 encoded, try to decode it
+  try {
+    if (!key.includes('-----BEGIN')) {
+      // It's likely base64 encoded, decode it
+      key = Buffer.from(key, 'base64').toString('utf8');
+    }
+  } catch (decodeError) {
+    console.error("Failed to decode PEM key:", decodeError);
+    // Use the key as-is if decoding fails
+  }
   
   const payload = {
     sub: playbackId,
@@ -39,7 +50,7 @@ function signMuxPlaybackToken(playbackId: string) {
     keyid: kid, // Use keyid instead of header.kid
   };
   
-  return jwt.sign(payload, key, options);
+  return jwt.sign(payload, key as Secret, options);
 }
 
 export async function OPTIONS(req: NextRequest) {
