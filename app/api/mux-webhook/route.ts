@@ -13,19 +13,41 @@ const asUUID = (v?: string | null) =>
 
 // Handle the Mux SDK differences across versions (verifySignature vs verifyHeader vs verify)
 function verifyMuxWebhook(raw: string, signature: string, secret: string) {
-  const Webhooks: any = (Mux as any).Webhooks;
-  if (!Webhooks) throw new Error("Mux.Webhooks missing");
-
-  if (typeof Webhooks.verifySignature === "function") {
-    return Webhooks.verifySignature(raw, signature, secret);
+  try {
+    // Try the new API first (v8+)
+    if (Mux.Webhooks && typeof Mux.Webhooks.verifySignature === "function") {
+      return Mux.Webhooks.verifySignature(raw, signature, secret);
+    }
+    
+    // Try older API (v7)
+    if (Mux.Webhooks && typeof Mux.Webhooks.verifyHeader === "function") {
+      return Mux.Webhooks.verifyHeader(raw, signature, secret);
+    }
+    
+    // Try even older API (v6 and below)
+    if (Mux.Webhooks && typeof Mux.Webhooks.verify === "function") {
+      return Mux.Webhooks.verify(raw, signature, secret);
+    }
+    
+    // If no Webhooks object, try direct import pattern
+    const { Webhooks } = Mux as any;
+    if (Webhooks) {
+      if (typeof Webhooks.verifySignature === "function") {
+        return Webhooks.verifySignature(raw, signature, secret);
+      }
+      if (typeof Webhooks.verifyHeader === "function") {
+        return Webhooks.verifyHeader(raw, signature, secret);
+      }
+      if (typeof Webhooks.verify === "function") {
+        return Webhooks.verify(raw, signature, secret);
+      }
+    }
+    
+    throw new Error("No compatible webhook verification method found in Mux SDK");
+  } catch (error) {
+    console.error("Webhook verification failed:", error);
+    throw error;
   }
-  if (typeof Webhooks.verifyHeader === "function") {
-    return Webhooks.verifyHeader(raw, signature, secret);
-  }
-  if (typeof Webhooks.verify === "function") {
-    return Webhooks.verify(raw, signature, secret);
-  }
-  throw new Error("No verify* function on Mux.Webhooks");
 }
 
 function ok(json: any) {
@@ -48,10 +70,20 @@ export async function OPTIONS() {
 }
 
 export async function POST(req: NextRequest) {
-  const raw = await req.text(); // raw body required for Mux verification
-  const sig = req.headers.get("mux-signature") || "";
-  const secret = process.env.MUX_WEBHOOK_SECRET!;
   try {
+    const raw = await req.text(); // raw body required for Mux verification
+    const sig = req.headers.get("mux-signature") || "";
+    const secret = process.env.MUX_WEBHOOK_SECRET;
+    
+    if (!secret) {
+      console.error("MUX_WEBHOOK_SECRET not configured");
+      return new Response(JSON.stringify({ error: "webhook secret not configured" }), {
+        status: 500,
+        headers: { "content-type": "application/json" },
+      });
+    }
+
+    // Verify the webhook signature
     verifyMuxWebhook(raw, sig, secret);
 
     const evt = JSON.parse(raw) as { type: string; data: any };
@@ -61,9 +93,11 @@ export async function POST(req: NextRequest) {
       let meta: any = {};
       try {
         meta = data?.passthrough ? JSON.parse(data.passthrough) : {};
-      } catch {}
+      } catch (parseError) {
+        console.warn("Failed to parse passthrough data:", parseError);
+      }
 
-      await supabaseAdmin.from("videos").upsert(
+      const result = await supabaseAdmin.from("videos").upsert(
         {
           asset_id: data.id,
           upload_id: data.upload_id ?? null,
@@ -74,6 +108,14 @@ export async function POST(req: NextRequest) {
         },
         { onConflict: "asset_id" }
       );
+      
+      if (result.error) {
+        console.error("Supabase upsert error (asset.created):", result.error);
+        return new Response(JSON.stringify({ error: "database error" }), {
+          status: 500,
+          headers: { "content-type": "application/json" },
+        });
+      }
 
       return ok({ ok: true, handled: "asset.created" });
     }
@@ -81,10 +123,18 @@ export async function POST(req: NextRequest) {
     if (type === "video.asset.ready") {
       const playbackId: string | undefined = data?.playback_ids?.[0]?.id;
 
-      await supabaseAdmin
+      const result = await supabaseAdmin
         .from("videos")
         .update({ status: "ready", playback_id: playbackId ?? null })
         .eq("asset_id", data.id);
+        
+      if (result.error) {
+        console.error("Supabase update error (asset.ready):", result.error);
+        return new Response(JSON.stringify({ error: "database error" }), {
+          status: 500,
+          headers: { "content-type": "application/json" },
+        });
+      }
 
       return ok({ ok: true, handled: "asset.ready" });
     }
