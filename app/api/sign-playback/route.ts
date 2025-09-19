@@ -27,16 +27,18 @@ function cors(req: NextRequest) {
 function signMuxPlaybackToken(playbackId: string) {
   const kid = process.env.MUX_SIGNING_KEY_ID!;
   const key = process.env.MUX_SIGNING_KEY_SECRET! as Secret; // full PEM private key string
+  
   const payload = {
     sub: playbackId,
     aud: "v", // viewer token
     exp: Math.floor(Date.now() / 1000) + 60 * 60, // 1 hour
   };
+  
   const options: SignOptions = {
     algorithm: "RS256",
-    // include alg in header for picky TS defs
-    header: { kid, alg: "RS256" } as any,
+    keyid: kid, // Use keyid instead of header.kid
   };
+  
   return jwt.sign(payload, key, options);
 }
 
