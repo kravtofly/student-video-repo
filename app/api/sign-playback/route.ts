@@ -1,10 +1,11 @@
 // app/api/sign-playback/route.ts
 import { NextRequest } from "next/server";
-import jwt from "jsonwebtoken";
+import jwt, { type Secret, type SignOptions } from "jsonwebtoken";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
+// Allowed frontends
 const ALLOWED = new Set([
   "https://www.kravtofly.com",
   "https://kravtofly.com",
@@ -25,12 +26,18 @@ function cors(req: NextRequest) {
 
 function signMuxPlaybackToken(playbackId: string) {
   const kid = process.env.MUX_SIGNING_KEY_ID!;
-  const key = process.env.MUX_SIGNING_KEY_SECRET!; // full PEM private key
-  const exp = Math.floor(Date.now() / 1000) + 60 * 60; // 1h
-  return jwt.sign({ sub: playbackId, exp, aud: "v" }, key, {
+  const key = process.env.MUX_SIGNING_KEY_SECRET! as Secret; // full PEM private key string
+  const payload = {
+    sub: playbackId,
+    aud: "v", // viewer token
+    exp: Math.floor(Date.now() / 1000) + 60 * 60, // 1 hour
+  };
+  const options: SignOptions = {
     algorithm: "RS256",
-    header: { kid },
-  });
+    // include alg in header for picky TS defs
+    header: { kid, alg: "RS256" } as any,
+  };
+  return jwt.sign(payload, key, options);
 }
 
 export async function OPTIONS(req: NextRequest) {
