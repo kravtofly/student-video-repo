@@ -12,18 +12,29 @@ export async function GET(req: Request) {
       return NextResponse.json({ error: "Missing playback_id" }, { status: 400 });
     }
 
-    // Mux dashboard provides the secret base64-encoded (unless you saved the PEM).
+    // Mux dashboard usually stores the private key as base64; decode to PEM if needed.
     const rawSecret = MUX_SIGNING_KEY_SECRET ?? "";
     const keySecret = rawSecret.includes("-----BEGIN")
       ? rawSecret
       : Buffer.from(rawSecret, "base64").toString("utf8");
 
-    // Short-lived signed playback token
-    const token = Mux.Jwt.signPlaybackId(playbackId, {
+    // Support both historical and current helper names without fighting types
+    const JwtHelper: any = (Mux as any).Jwt || (Mux as any).JWT;
+    if (!JwtHelper) {
+      throw new Error("Mux JWT helper not available on @mux/mux-node");
+    }
+
+    const opts = {
       keyId: MUX_SIGNING_KEY_ID!,
       keySecret,
-      expiration: 60, // seconds; adjust as needed
-    });
+      // `expiration` maps to `expiresIn` under the hood in older helpers
+      // e.g. "60" == 60 seconds. Adjust to taste.
+      expiration: 60,
+    };
+
+    const token = typeof JwtHelper.signPlaybackId === "function"
+      ? JwtHelper.signPlaybackId(playbackId, opts)
+      : JwtHelper.sign(playbackId, opts); // fallback used in older docs
 
     return NextResponse.json({ token }, { status: 200 });
   } catch (err) {
