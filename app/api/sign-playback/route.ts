@@ -2,7 +2,6 @@
 import { NextResponse } from "next/server";
 import Mux from "@mux/mux-node";
 
-// Expect these to be set in Vercel → Project Settings → Environment Variables
 const { MUX_SIGNING_KEY_ID, MUX_SIGNING_KEY_SECRET } = process.env;
 
 export async function GET(req: Request) {
@@ -13,19 +12,17 @@ export async function GET(req: Request) {
       return NextResponse.json({ error: "Missing playback_id" }, { status: 400 });
     }
 
-    // Mux dashboard gives the signing key *secret* base64-encoded.
-    // Decode if it doesn't already look like a PEM.
+    // Mux dashboard provides the secret base64-encoded (unless you saved the PEM).
     const rawSecret = MUX_SIGNING_KEY_SECRET ?? "";
     const keySecret = rawSecret.includes("-----BEGIN")
       ? rawSecret
       : Buffer.from(rawSecret, "base64").toString("utf8");
 
-    // Create a short-lived token for signed playback
-    // (You can adjust expiration to taste; 60–120s is a common choice.)
-    const token = Mux.JWT.signPlaybackId(playbackId, {
+    // Short-lived signed playback token
+    const token = Mux.Jwt.signPlaybackId(playbackId, {
       keyId: MUX_SIGNING_KEY_ID!,
       keySecret,
-      expiration: 60,
+      expiration: 60, // seconds; adjust as needed
     });
 
     return NextResponse.json({ token }, { status: 200 });
