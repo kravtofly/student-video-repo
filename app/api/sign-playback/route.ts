@@ -1,100 +1,36 @@
 // app/api/sign-playback/route.ts
-import { NextRequest } from "next/server";
-import jwt, { type Secret, type SignOptions } from "jsonwebtoken";
+import { NextResponse } from "next/server";
+import Mux from "@mux/mux-node";
 
-export const runtime = "nodejs";
-export const dynamic = "force-dynamic";
+// Expect these to be set in Vercel → Project Settings → Environment Variables
+const { MUX_SIGNING_KEY_ID, MUX_SIGNING_KEY_SECRET } = process.env;
 
-// Allowed frontends
-const ALLOWED = new Set([
-  "https://www.kravtofly.com",
-  "https://kravtofly.com",
-  "http://localhost:3000",
-]);
-
-function cors(req: NextRequest) {
-  const origin = req.headers.get("origin") || "";
-  const allow = ALLOWED.has(origin) ? origin : "https://www.kravtofly.com";
-  const h = new Headers();
-  h.set("Access-Control-Allow-Origin", allow);
-  h.set("Access-Control-Allow-Methods", "GET,POST,OPTIONS");
-  h.set("Access-Control-Allow-Headers", "Content-Type, Authorization");
-  h.set("Access-Control-Max-Age", "86400");
-  h.set("content-type", "application/json");
-  return h;
-}
-
-function signMuxPlaybackToken(playbackId: string) {
-  const kid = process.env.MUX_SIGNING_KEY_ID!;
-  let key = process.env.MUX_SIGNING_KEY_SECRET!;
-  
-  // The key might be base64 encoded, try to decode it
+export async function GET(req: Request) {
   try {
-    if (!key.includes('-----BEGIN')) {
-      // It's likely base64 encoded, decode it
-      key = Buffer.from(key, 'base64').toString('utf8');
+    const { searchParams } = new URL(req.url);
+    const playbackId = searchParams.get("playback_id");
+    if (!playbackId) {
+      return NextResponse.json({ error: "Missing playback_id" }, { status: 400 });
     }
-  } catch (decodeError) {
-    console.error("Failed to decode PEM key:", decodeError);
-    // Use the key as-is if decoding fails
-  }
-  
-  const payload = {
-    sub: playbackId,
-    aud: "v", // viewer token
-    exp: Math.floor(Date.now() / 1000) + 60 * 60, // 1 hour
-  };
-  
-  const options: SignOptions = {
-    algorithm: "RS256",
-    keyid: kid, // Use keyid instead of header.kid
-  };
-  
-  return jwt.sign(payload, key as Secret, options);
-}
 
-export async function OPTIONS(req: NextRequest) {
-  return new Response(null, { status: 204, headers: cors(req) });
-}
+    // Mux dashboard gives the signing key *secret* base64-encoded.
+    // Decode if it doesn't already look like a PEM.
+    const rawSecret = MUX_SIGNING_KEY_SECRET ?? "";
+    const keySecret = rawSecret.includes("-----BEGIN")
+      ? rawSecret
+      : Buffer.from(rawSecret, "base64").toString("utf8");
 
-export async function GET(req: NextRequest) {
-  const headers = cors(req);
-  const playbackId = new URL(req.url).searchParams.get("playbackId");
-  if (!playbackId) {
-    return new Response(JSON.stringify({ error: "missing playbackId" }), {
-      status: 400,
-      headers,
+    // Create a short-lived token for signed playback
+    // (You can adjust expiration to taste; 60–120s is a common choice.)
+    const token = Mux.JWT.signPlaybackId(playbackId, {
+      keyId: MUX_SIGNING_KEY_ID!,
+      keySecret,
+      expiration: 60,
     });
-  }
-  try {
-    const token = signMuxPlaybackToken(playbackId);
-    return new Response(JSON.stringify({ token }), { status: 200, headers });
-  } catch (e: any) {
-    console.error("sign error", e?.message || e);
-    return new Response(JSON.stringify({ error: "sign failed" }), {
-      status: 500,
-      headers,
-    });
-  }
-}
 
-export async function POST(req: NextRequest) {
-  const headers = cors(req);
-  const { playbackId } = await req.json().catch(() => ({}));
-  if (!playbackId) {
-    return new Response(JSON.stringify({ error: "missing playbackId" }), {
-      status: 400,
-      headers,
-    });
-  }
-  try {
-    const token = signMuxPlaybackToken(playbackId);
-    return new Response(JSON.stringify({ token }), { status: 200, headers });
-  } catch (e: any) {
-    console.error("sign error", e?.message || e);
-    return new Response(JSON.stringify({ error: "sign failed" }), {
-      status: 500,
-      headers,
-    });
+    return NextResponse.json({ token }, { status: 200 });
+  } catch (err) {
+    console.error(err);
+    return NextResponse.json({ error: "Failed to sign playback token" }, { status: 500 });
   }
 }
