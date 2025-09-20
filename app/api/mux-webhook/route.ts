@@ -26,12 +26,15 @@ function verifyMuxSignature(raw: string, sigHeader: string | null, secret: strin
 
   // expected = HMAC_SHA256(`${t}.${raw}`, secret)
   const payload = `${t}.${raw}`;
-  const expected = crypto.createHmac("sha256", secret).update(payload).digest("hex");
+  const expectedHex = crypto.createHmac("sha256", secret).update(payload).digest("hex");
 
-  // timing-safe compare
-  const a = Buffer.from(expected, "hex");
-  const b = Buffer.from(v1, "hex");
-  if (a.length !== b.length) return false;
+  const aBuf = Buffer.from(expectedHex, "hex");
+  const bBuf = Buffer.from(v1, "hex");
+  if (aBuf.length !== bBuf.length) return false;
+
+  // Use Uint8Array views to satisfy TS's ArrayBufferView requirement
+  const a = new Uint8Array(aBuf.buffer, aBuf.byteOffset, aBuf.byteLength);
+  const b = new Uint8Array(bBuf.buffer, bBuf.byteOffset, bBuf.byteLength);
   if (!crypto.timingSafeEqual(a, b)) return false;
 
   // timestamp tolerance
@@ -58,9 +61,6 @@ function ok(json: any, status = 200) {
   });
 }
 
-// No CORS preflight needed for server-to-server webhooks; middleware handles /api anyway.
-// If you keep an OPTIONS handler, do NOT send wildcard origins.
-
 export async function POST(req: NextRequest) {
   try {
     if (!WEBHOOK_SECRET) {
@@ -81,12 +81,10 @@ export async function POST(req: NextRequest) {
 
     // 1) ASSET CREATED (two variants): link upload -> asset, capture metadata
     if (type === "video.upload.asset_created" || type === "video.asset.created") {
-      // Prefer upload.id from the "upload.asset_created" variant; fallback to data.upload_id if present
       const uploadId: string | undefined =
         object?.type === "upload" ? object?.id : data?.upload_id;
       const assetId: string | undefined = data?.asset_id ?? data?.id;
 
-      // Optional passthrough metadata (we set this at new_asset_settings.passthrough)
       let meta: any = {};
       try {
         meta = data?.passthrough ? JSON.parse(data.passthrough) : {};
@@ -95,7 +93,6 @@ export async function POST(req: NextRequest) {
       }
 
       if (assetId) {
-        // Make sure there is a signed playback ID on the asset
         let signedPid: string | null = null;
         try {
           signedPid = await ensureSignedPlaybackId(assetId);
@@ -103,7 +100,6 @@ export async function POST(req: NextRequest) {
           console.warn("ensureSignedPlaybackId failed:", e);
         }
 
-        // Upsert by asset_id; also write upload_id (if we have it)
         const { error } = await supabaseAdmin.from("videos").upsert(
           {
             asset_id: assetId,
@@ -112,13 +108,11 @@ export async function POST(req: NextRequest) {
             title: meta.filename ?? null,
             owner_id: asUUID(meta.userId),
             status: "processing",
-            playback_id: signedPid, // may be null if API failed; ready event will try again
+            playback_id: signedPid, // may be null if creation failed; "ready" will try again
           },
           { onConflict: "asset_id" }
         );
-        if (error) {
-          console.error("Supabase upsert error (asset.created):", error);
-        }
+        if (error) console.error("Supabase upsert error (asset.created):", error);
       }
 
       return ok({ ok: true, handled: type });
@@ -139,10 +133,7 @@ export async function POST(req: NextRequest) {
           .from("videos")
           .update({ status: "ready", playback_id: signedPid })
           .eq("asset_id", assetId);
-
-        if (error) {
-          console.error("Supabase update error (asset.ready):", error);
-        }
+        if (error) console.error("Supabase update error (asset.ready):", error);
       }
 
       return ok({ ok: true, handled: "video.asset.ready" });
