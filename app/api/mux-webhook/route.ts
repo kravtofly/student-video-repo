@@ -13,11 +13,11 @@ const asUUID = (v?: string | null) =>
     : null;
 
 const WEBHOOK_SECRET = process.env.MUX_WEBHOOK_SECRET!;
-const TOLERANCE_SECONDS = 300; // 5m
+const TOLERANCE_SECONDS = 300; // 5 minutes
 
 function verifyMuxSignature(raw: string, sigHeader: string | null, secret: string): boolean {
   if (!sigHeader) return false;
-  // "t=TIMESTAMP,v1=HMAC_HEX"
+  // Header: "t=TIMESTAMP,v1=HMAC_HEX"
   const parts = sigHeader.split(",").map((s) => s.trim());
   const t = parts.find((p) => p.startsWith("t="))?.slice(2);
   const v1 = parts.find((p) => p.startsWith("v1="))?.slice(3);
@@ -29,12 +29,16 @@ function verifyMuxSignature(raw: string, sigHeader: string | null, secret: strin
   const aBuf = Buffer.from(expectedHex, "hex");
   const bBuf = Buffer.from(v1, "hex");
   if (aBuf.length !== bBuf.length) return false;
+
+  // Use Uint8Array views for timingSafeEqual
   const a = new Uint8Array(aBuf.buffer, aBuf.byteOffset, aBuf.byteLength);
   const b = new Uint8Array(bBuf.buffer, bBuf.byteOffset, bBuf.byteLength);
   if (!crypto.timingSafeEqual(a, b)) return false;
 
+  // Timestamp tolerance
   const now = Math.floor(Date.now() / 1000);
   if (Math.abs(now - Number(t)) > TOLERANCE_SECONDS) return false;
+
   return true;
 }
 
@@ -59,7 +63,7 @@ export async function POST(req: NextRequest) {
   try {
     if (!WEBHOOK_SECRET) return ok({ error: "webhook secret not configured" }, 500);
 
-    const raw = await req.text();
+    const raw = await req.text(); // raw body for signature verification
     const sig = req.headers.get("mux-signature") || req.headers.get("Mux-Signature");
     if (!verifyMuxSignature(raw, sig, WEBHOOK_SECRET)) {
       return ok({ error: "invalid signature" }, 400);
@@ -70,8 +74,7 @@ export async function POST(req: NextRequest) {
     const data: any = evt?.data ?? {};
     const object: any = evt?.object ?? {};
 
-    // Helper: write by upload_id first (to hit the row created at /create-upload),
-    // then fall back to upsert by asset_id if no row matched.
+    // Helper: update by upload_id first, fallback to upsert by asset_id
     async function writeByUploadOrAsset(params: {
       uploadId?: string;
       assetId: string;
@@ -82,7 +85,7 @@ export async function POST(req: NextRequest) {
     }) {
       const { uploadId, assetId, status, filename, ownerId, playbackId } = params;
 
-      // 1) Try to update the existing upload row
+      // 1) Try to update existing row using upload_id
       if (uploadId) {
         const { data: updated, error: upErr } = await supabaseAdmin
           .from("videos")
@@ -90,21 +93,20 @@ export async function POST(req: NextRequest) {
             asset_id: assetId,
             playback_id: playbackId ?? null,
             status: status ?? null,
-            // Only set title/filename if provided (won't overwrite existing unless non-null)
             ...(filename ? { filename, title: filename } : {}),
             ...(ownerId ? { owner_id: asUUID(ownerId) } : {}),
           })
           .eq("upload_id", uploadId)
-          .select("id"); // to know if anything matched
+          .select("id");
 
         if (upErr) {
           console.error("update by upload_id error:", upErr);
         } else if (updated && updated.length > 0) {
-          return true; // done
+          return true; // matched the row created at /create-upload
         }
       }
 
-      // 2) No upload row matched — insert/update by asset_id
+      // 2) No match by upload_id — upsert by asset_id
       const { error: insErr } = await supabaseAdmin
         .from("videos")
         .upsert(
@@ -124,8 +126,9 @@ export async function POST(req: NextRequest) {
       return true;
     }
 
-    // ————————————————————————————————————————————————————————————————
+    // ------------------------------------------------------------------
     // 1) Asset created (two variants)
+    // ------------------------------------------------------------------
     if (type === "video.upload.asset_created" || type === "video.asset.created") {
       const uploadId: string | undefined =
         object?.type === "upload" ? object?.id : data?.upload_id;
@@ -159,7 +162,9 @@ export async function POST(req: NextRequest) {
       return ok({ ok: true, handled: type });
     }
 
+    // ------------------------------------------------------------------
     // 2) Asset ready
+    // ------------------------------------------------------------------
     if (type === "video.asset.ready") {
       const assetId: string | undefined = data?.id ?? data?.asset_id;
       if (assetId) {
@@ -170,7 +175,6 @@ export async function POST(req: NextRequest) {
           console.warn("ensureSignedPlaybackId (ready) failed:", e);
         }
 
-        // Update by asset_id (we know it now)
         const { error } = await supabaseAdmin
           .from("videos")
           .update({ status: "ready", playback_id: signedPid })
@@ -181,11 +185,41 @@ export async function POST(req: NextRequest) {
       return ok({ ok: true, handled: "video.asset.ready" });
     }
 
+    // ------------------------------------------------------------------
+    // 3) Asset errored
+    // ------------------------------------------------------------------
+    if (type === "video.asset.errored") {
+      const assetId: string | undefined = data?.id ?? data?.asset_id;
+      if (assetId) {
+        const { error } = await supabaseAdmin
+          .from("videos")
+          .update({ status: "errored" })
+          .eq("asset_id", assetId);
+        if (error) console.error("update status=errored error:", error);
+      }
+      return ok({ ok: true, handled: "video.asset.errored" });
+    }
+
+    // ------------------------------------------------------------------
+    // 4) Asset deleted
+    // ------------------------------------------------------------------
+    if (type === "video.asset.deleted") {
+      const assetId: string | undefined = data?.id ?? data?.asset_id;
+      if (assetId) {
+        const { error } = await supabaseAdmin
+          .from("videos")
+          .update({ status: "deleted", playback_id: null })
+          .eq("asset_id", assetId);
+        if (error) console.error("update status=deleted error:", error);
+      }
+      return ok({ ok: true, handled: "video.asset.deleted" });
+    }
+
     // Ignore others
     return ok({ ok: true, handled: "ignored", type });
   } catch (err: any) {
     console.error("mux-webhook error:", err?.message || err);
-    // still 2xx to avoid endless retries (logs capture the issue)
+    // Return 200 to avoid endless retries; logs will capture the issue.
     return ok({ ok: true, note: "handled with error" });
   }
 }
