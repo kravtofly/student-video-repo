@@ -1,7 +1,9 @@
 // app/api/mux-webhook/route.ts
 import type { NextRequest } from "next/server";
-import Mux from "@mux/mux-node";
+import { NextResponse } from "next/server";
+import crypto from "node:crypto";
 import { supabaseAdmin } from "@/lib/supabase";
+import { video } from "@/lib/mux"; // needs MUX_TOKEN_ID / MUX_TOKEN_SECRET
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -11,129 +13,146 @@ const asUUID = (v?: string | null) =>
     ? v
     : null;
 
-// Handle the Mux SDK differences across versions (verifySignature vs verifyHeader vs verify)
-function verifyMuxWebhook(raw: string, signature: string, secret: string) {
-  try {
-    // Cast to any to avoid TypeScript issues with dynamic property access
-    const webhooks = (Mux as any).Webhooks;
-    
-    if (!webhooks) {
-      throw new Error("Mux.Webhooks not found in SDK");
-    }
-    
-    // Try different method names that exist across versions
-    const methods = ['verifySignature', 'verifyHeader', 'verify'];
-    
-    for (const method of methods) {
-      if (typeof webhooks[method] === "function") {
-        console.log(`Using Mux webhook verification method: ${method}`);
-        return webhooks[method](raw, signature, secret);
-      }
-    }
-    
-    throw new Error("No compatible webhook verification method found in Mux SDK");
-  } catch (error) {
-    console.error("Webhook verification failed:", error);
-    throw error;
-  }
+const WEBHOOK_SECRET = process.env.MUX_WEBHOOK_SECRET!;
+const TOLERANCE_SECONDS = 5 * 60; // 5 minutes
+
+function verifyMuxSignature(raw: string, sigHeader: string | null, secret: string): boolean {
+  if (!sigHeader) return false;
+  // header: t=TIMESTAMP,v1=HMAC_HEX
+  const parts = sigHeader.split(",").map((s) => s.trim());
+  const t = parts.find((p) => p.startsWith("t="))?.slice(2);
+  const v1 = parts.find((p) => p.startsWith("v1="))?.slice(3);
+  if (!t || !v1) return false;
+
+  // expected = HMAC_SHA256(`${t}.${raw}`, secret)
+  const payload = `${t}.${raw}`;
+  const expected = crypto.createHmac("sha256", secret).update(payload).digest("hex");
+
+  // timing-safe compare
+  const a = Buffer.from(expected, "hex");
+  const b = Buffer.from(v1, "hex");
+  if (a.length !== b.length) return false;
+  if (!crypto.timingSafeEqual(a, b)) return false;
+
+  // timestamp tolerance
+  const now = Math.floor(Date.now() / 1000);
+  if (Math.abs(now - Number(t)) > TOLERANCE_SECONDS) return false;
+
+  return true;
 }
 
-function ok(json: any) {
+async function ensureSignedPlaybackId(assetId: string): Promise<string | null> {
+  const asset: any = await video.assets.retrieve(assetId);
+  let signed = asset?.playback_ids?.find((p: any) => p.policy === "signed")?.id ?? null;
+  if (!signed) {
+    const pb: any = await video.assets.createPlaybackId(assetId, { policy: "signed" });
+    signed = pb?.id ?? null;
+  }
+  return signed;
+}
+
+function ok(json: any, status = 200) {
   return new Response(JSON.stringify(json), {
-    status: 200,
+    status,
     headers: { "content-type": "application/json" },
   });
 }
 
-export async function OPTIONS() {
-  return new Response(null, {
-    status: 204,
-    headers: {
-      "Access-Control-Allow-Origin": "*",
-      "Access-Control-Allow-Methods": "POST, OPTIONS",
-      "Access-Control-Allow-Headers": "*",
-      "Access-Control-Max-Age": "86400",
-    },
-  });
-}
+// No CORS preflight needed for server-to-server webhooks; middleware handles /api anyway.
+// If you keep an OPTIONS handler, do NOT send wildcard origins.
 
 export async function POST(req: NextRequest) {
   try {
-    const raw = await req.text(); // raw body required for Mux verification
-    const sig = req.headers.get("mux-signature") || "";
-    const secret = process.env.MUX_WEBHOOK_SECRET;
-    
-    if (!secret) {
+    if (!WEBHOOK_SECRET) {
       console.error("MUX_WEBHOOK_SECRET not configured");
-      return new Response(JSON.stringify({ error: "webhook secret not configured" }), {
-        status: 500,
-        headers: { "content-type": "application/json" },
-      });
+      return ok({ error: "webhook secret not configured" }, 500);
     }
 
-    // Verify the webhook signature
-    verifyMuxWebhook(raw, sig, secret);
+    const raw = await req.text(); // raw body required for verification
+    const sig = req.headers.get("mux-signature") || req.headers.get("Mux-Signature");
+    if (!verifyMuxSignature(raw, sig, WEBHOOK_SECRET)) {
+      return ok({ error: "invalid signature" }, 400);
+    }
 
-    const evt = JSON.parse(raw) as { type: string; data: any };
-    const { type, data } = evt;
+    const evt = JSON.parse(raw);
+    const type: string = evt?.type ?? "";
+    const data: any = evt?.data ?? {};
+    const object: any = evt?.object ?? {};
 
-    if (type === "video.asset.created") {
+    // 1) ASSET CREATED (two variants): link upload -> asset, capture metadata
+    if (type === "video.upload.asset_created" || type === "video.asset.created") {
+      // Prefer upload.id from the "upload.asset_created" variant; fallback to data.upload_id if present
+      const uploadId: string | undefined =
+        object?.type === "upload" ? object?.id : data?.upload_id;
+      const assetId: string | undefined = data?.asset_id ?? data?.id;
+
+      // Optional passthrough metadata (we set this at new_asset_settings.passthrough)
       let meta: any = {};
       try {
         meta = data?.passthrough ? JSON.parse(data.passthrough) : {};
-      } catch (parseError) {
-        console.warn("Failed to parse passthrough data:", parseError);
+      } catch (e) {
+        console.warn("Failed to parse asset passthrough:", e);
       }
 
-      const result = await supabaseAdmin.from("videos").upsert(
-        {
-          asset_id: data.id,
-          upload_id: data.upload_id ?? null,
-          filename: meta.filename ?? null,
-          title: meta.filename ?? null,
-          owner_id: asUUID(meta.userId), // null if not a UUID
-          status: "processing",
-        },
-        { onConflict: "asset_id" }
-      );
-      
-      if (result.error) {
-        console.error("Supabase upsert error (asset.created):", result.error);
-        return new Response(JSON.stringify({ error: "database error" }), {
-          status: 500,
-          headers: { "content-type": "application/json" },
-        });
+      if (assetId) {
+        // Make sure there is a signed playback ID on the asset
+        let signedPid: string | null = null;
+        try {
+          signedPid = await ensureSignedPlaybackId(assetId);
+        } catch (e) {
+          console.warn("ensureSignedPlaybackId failed:", e);
+        }
+
+        // Upsert by asset_id; also write upload_id (if we have it)
+        const { error } = await supabaseAdmin.from("videos").upsert(
+          {
+            asset_id: assetId,
+            upload_id: uploadId ?? null,
+            filename: meta.filename ?? null,
+            title: meta.filename ?? null,
+            owner_id: asUUID(meta.userId),
+            status: "processing",
+            playback_id: signedPid, // may be null if API failed; ready event will try again
+          },
+          { onConflict: "asset_id" }
+        );
+        if (error) {
+          console.error("Supabase upsert error (asset.created):", error);
+        }
       }
 
-      return ok({ ok: true, handled: "asset.created" });
+      return ok({ ok: true, handled: type });
     }
 
+    // 2) ASSET READY: ensure signed playback id and mark ready
     if (type === "video.asset.ready") {
-      const playbackId: string | undefined = data?.playback_ids?.[0]?.id;
+      const assetId: string | undefined = data?.id ?? data?.asset_id;
+      if (assetId) {
+        let signedPid: string | null = null;
+        try {
+          signedPid = await ensureSignedPlaybackId(assetId);
+        } catch (e) {
+          console.warn("ensureSignedPlaybackId failed (ready):", e);
+        }
 
-      const result = await supabaseAdmin
-        .from("videos")
-        .update({ status: "ready", playback_id: playbackId ?? null })
-        .eq("asset_id", data.id);
-        
-      if (result.error) {
-        console.error("Supabase update error (asset.ready):", result.error);
-        return new Response(JSON.stringify({ error: "database error" }), {
-          status: 500,
-          headers: { "content-type": "application/json" },
-        });
+        const { error } = await supabaseAdmin
+          .from("videos")
+          .update({ status: "ready", playback_id: signedPid })
+          .eq("asset_id", assetId);
+
+        if (error) {
+          console.error("Supabase update error (asset.ready):", error);
+        }
       }
 
-      return ok({ ok: true, handled: "asset.ready" });
+      return ok({ ok: true, handled: "video.asset.ready" });
     }
 
-    // ignore other events
+    // Ignore other events
     return ok({ ok: true, handled: "ignored", type });
   } catch (err: any) {
     console.error("mux-webhook error:", err?.message || err);
-    return new Response(JSON.stringify({ error: "invalid webhook" }), {
-      status: 400,
-      headers: { "content-type": "application/json" },
-    });
+    // Return 200 to avoid infinite retries; logs still capture the issue.
+    return ok({ ok: true, note: "handled with error" });
   }
 }
