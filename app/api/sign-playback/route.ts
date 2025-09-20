@@ -1,4 +1,8 @@
 // app/api/sign-playback/route.ts
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
+
+// app/api/sign-playback/route.ts
 import { NextResponse } from "next/server";
 import jwt from "jsonwebtoken";
 
