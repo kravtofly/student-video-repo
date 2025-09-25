@@ -7,12 +7,15 @@ import { supabaseAdmin } from "@/lib/supabase";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!, { apiVersion: "2024-06-20" });
+const STRIPE_SECRET_KEY = process.env.STRIPE_SECRET_KEY!;
 const WEBHOOK_SECRET = process.env.STRIPE_WEBHOOK_SECRET_REVIEW!;
 
-// Stripe needs the raw body
+const stripe = new Stripe(STRIPE_SECRET_KEY, { apiVersion: "2024-06-20" });
+
+// Stripe needs the RAW body for signature verification
 export async function POST(req: NextRequest) {
   let event: Stripe.Event;
+
   try {
     const raw = await req.text();
     const sig = req.headers.get("stripe-signature") || "";
@@ -23,6 +26,7 @@ export async function POST(req: NextRequest) {
   }
 
   try {
+    // 1) Payment completed -> mark order as paid
     if (event.type === "checkout.session.completed") {
       const session = event.data.object as Stripe.Checkout.Session;
       const reviewOrderId = session.metadata?.review_order_id;
@@ -31,30 +35,63 @@ export async function POST(req: NextRequest) {
           .from("review_orders")
           .update({
             status: "paid",
-            stripe_payment_intent_id: typeof session.payment_intent === "string" ? session.payment_intent : (session.payment_intent as any)?.id ?? null,
+            stripe_payment_intent_id:
+              typeof session.payment_intent === "string"
+                ? session.payment_intent
+                : (session.payment_intent as any)?.id ?? null,
           })
           .eq("id", reviewOrderId);
       }
     }
 
+    // 2) Checkout expired -> mark order cancelled
     if (event.type === "checkout.session.expired") {
       const session = event.data.object as Stripe.Checkout.Session;
       const reviewOrderId = session.metadata?.review_order_id;
       if (reviewOrderId) {
-        await supabaseAdmin.from("review_orders").update({ status: "cancelled" }).eq("id", reviewOrderId);
+        await supabaseAdmin
+          .from("review_orders")
+          .update({ status: "cancelled" })
+          .eq("id", reviewOrderId);
       }
     }
 
-    if (event.type === "charge.refunded" || event.type === "payment_intent.partially_refunded") {
-      const pi = (event.data.object as any)?.payment_intent?.id || (event.data.object as any)?.id;
+    // 3) Refund created (full or partial) -> mark order refunded
+    if (event.type === "refund.created") {
+      const refund = event.data.object as Stripe.Refund;
+      const pi =
+        typeof refund.payment_intent === "string"
+          ? refund.payment_intent
+          : (refund.payment_intent as any)?.id ?? null;
+
       if (pi) {
-        await supabaseAdmin.from("review_orders").update({ status: "refunded" }).eq("stripe_payment_intent_id", pi);
+        await supabaseAdmin
+          .from("review_orders")
+          .update({ status: "refunded" })
+          .eq("stripe_payment_intent_id", pi);
+      }
+    }
+
+    // (Optional legacy/fallback) charge.refunded
+    if (event.type === "charge.refunded") {
+      const ch = event.data.object as Stripe.Charge;
+      const pi =
+        typeof ch.payment_intent === "string"
+          ? ch.payment_intent
+          : (ch.payment_intent as any)?.id ?? null;
+
+      if (pi) {
+        await supabaseAdmin
+          .from("review_orders")
+          .update({ status: "refunded" })
+          .eq("stripe_payment_intent_id", pi);
       }
     }
 
     return new NextResponse("ok", { status: 200 });
   } catch (err: any) {
-    console.error("stripe webhook error:", err?.message || err);
-    return new NextResponse("ok", { status: 200 }); // avoid retries; logs capture issues
+    console.error("stripe webhook handler error:", err?.message || err);
+    // Return 200 to avoid repeated retries; errors are logged.
+    return new NextResponse("ok", { status: 200 });
   }
 }
