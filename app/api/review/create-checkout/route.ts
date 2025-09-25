@@ -6,7 +6,8 @@ import { supabaseAdmin } from "@/lib/supabase";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!, { apiVersion: "2024-06-20" });
+// Stripe SDK pinned to a TS-accepted version string
+const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!, { apiVersion: "2023-10-16" });
 const APP_URL = process.env.PUBLIC_APP_URL || "https://student-video-repo.vercel.app";
 
 type Body = {
@@ -18,13 +19,13 @@ type Body = {
   coachEmail?: string;
 
   currency?: "usd";
-  unitPriceCents: number;       // per-video price (snapshot)
+  unitPriceCents: number; // per-video price (snapshot)
   numVideos: number;
 
   oneOnOne?: boolean;
   oneOnOnePriceCents?: number;
 
-  publicDefault?: boolean;      // default publish to library
+  publicDefault?: boolean; // default publish to library
   termsAccepted?: boolean;
   termsVersion?: string;
 };
@@ -33,7 +34,6 @@ export async function POST(req: NextRequest) {
   try {
     const b = (await req.json()) as Body;
 
-    // Basic validation (for MVP; later: validate prices server-side from a trusted table)
     if (!b.studentEmail || !b.coachId || !b.unitPriceCents || !b.numVideos) {
       return NextResponse.json({ error: "missing required fields" }, { status: 400 });
     }
@@ -41,7 +41,7 @@ export async function POST(req: NextRequest) {
     const currency = b.currency || "usd";
     const oneOnOne = !!b.oneOnOne;
 
-    // 1) Create the order row first
+    // 1) Create the order row
     const { data: order, error } = await supabaseAdmin
       .from("review_orders")
       .insert({
@@ -67,7 +67,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: error?.message || "db insert failed" }, { status: 500 });
     }
 
-    // 2) Build Stripe Checkout with dynamic line items
+    // 2) Build Checkout Session
     const line_items: Stripe.Checkout.SessionCreateParams.LineItem[] = [
       {
         quantity: b.numVideos,
@@ -109,7 +109,7 @@ export async function POST(req: NextRequest) {
       cancel_url: `${APP_URL}/review/cancelled`,
     });
 
-    // 3) Save session id to the order
+    // 3) Save session id
     await supabaseAdmin
       .from("review_orders")
       .update({ stripe_session_id: session.id })
