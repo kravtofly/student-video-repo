@@ -17,7 +17,6 @@ const asUUID = (v?: string | null) =>
 
 function verifyMuxSignature(raw: string, sigHeader: string | null, secret: string): boolean {
   if (!sigHeader) return false;
-  // Header example: "t=TIMESTAMP,v1=HMAC_HEX"
   const parts = sigHeader.split(",").map((s) => s.trim());
   const t = parts.find((p) => p.startsWith("t="))?.slice(2);
   const v1 = parts.find((p) => p.startsWith("v1="))?.slice(3);
@@ -30,12 +29,10 @@ function verifyMuxSignature(raw: string, sigHeader: string | null, secret: strin
   const bBuf = Buffer.from(v1, "hex");
   if (aBuf.length !== bBuf.length) return false;
 
-  // timingSafeEqual needs ArrayBufferView, so compare Uint8Array views
   const a = new Uint8Array(aBuf.buffer, aBuf.byteOffset, aBuf.byteLength);
   const b = new Uint8Array(bBuf.buffer, bBuf.byteOffset, bBuf.byteLength);
   if (!crypto.timingSafeEqual(a, b)) return false;
 
-  // timestamp tolerance
   const now = Math.floor(Date.now() / 1000);
   if (Math.abs(now - Number(t)) > TOLERANCE_SECONDS) return false;
 
@@ -63,7 +60,7 @@ export async function POST(req: NextRequest) {
   try {
     if (!WEBHOOK_SECRET) return ok({ error: "webhook secret not configured" }, 500);
 
-    const raw = await req.text(); // raw body is required for signature verification
+    const raw = await req.text();
     const sig = req.headers.get("mux-signature") || req.headers.get("Mux-Signature");
     if (!verifyMuxSignature(raw, sig, WEBHOOK_SECRET)) {
       return ok({ error: "invalid signature" }, 400);
@@ -74,8 +71,6 @@ export async function POST(req: NextRequest) {
     const data: any = evt?.data ?? {};
     const object: any = evt?.object ?? {};
 
-    // Helper: update the DB row by upload_id first (created via /api/create-upload),
-    // fall back to upsert by asset_id if no row matched.
     async function writeByUploadOrAsset(params: {
       uploadId?: string;
       assetId: string;
@@ -111,7 +106,6 @@ export async function POST(req: NextRequest) {
         playbackId,
       } = params;
 
-      // 1) Try update by upload_id (preferred path to avoid uniqueness conflicts)
       if (uploadId) {
         const { data: updated, error: upErr } = await supabaseAdmin
           .from("videos")
@@ -141,7 +135,6 @@ export async function POST(req: NextRequest) {
         }
       }
 
-      // 2) Upsert by asset_id if no upload_id match
       const { error: insErr } = await supabaseAdmin
         .from("videos")
         .upsert(
@@ -170,9 +163,7 @@ export async function POST(req: NextRequest) {
       return true;
     }
 
-    // ------------------------------------------------------------------
-    // 1) Asset created (two possible event types)
-    // ------------------------------------------------------------------
+    // 1) Asset created
     if (type === "video.upload.asset_created" || type === "video.asset.created") {
       const uploadId: string | undefined =
         object?.type === "upload" ? object?.id : data?.upload_id;
@@ -215,9 +206,7 @@ export async function POST(req: NextRequest) {
       return ok({ ok: true, handled: type });
     }
 
-    // ------------------------------------------------------------------
     // 2) Asset ready
-    // ------------------------------------------------------------------
     if (type === "video.asset.ready") {
       const assetId: string | undefined = data?.id ?? data?.asset_id;
       if (assetId) {
@@ -228,35 +217,32 @@ export async function POST(req: NextRequest) {
           console.warn("ensureSignedPlaybackId (ready) failed:", e);
         }
 
-        // Update the video row to ready
         const { error } = await supabaseAdmin
           .from("videos")
           .update({ status: "ready", playback_id: signedPid })
           .eq("asset_id", assetId);
         if (error) console.error("update status=ready error:", error);
 
-        // 🔔 NEW: if linked to a review order, bump order to in_review
-        const { data: vrow } = await supabaseAdmin
+        // (Quietly) check if tied to a review order
+        const { data: vrow, error: readErr } = await supabaseAdmin
           .from("videos")
           .select("review_order_id")
           .eq("asset_id", assetId)
-          .single();
+          .maybeSingle(); // avoid 406 when zero rows
 
-        if (vrow?.review_order_id) {
+        if (!readErr && vrow?.review_order_id) {
           await supabaseAdmin
             .from("review_orders")
             .update({ status: "in_review" })
             .eq("id", vrow.review_order_id)
-            .in("status", ["paid", "uploading"]); // don't override complete/refunded/cancelled
+            .in("status", ["paid", "uploading"]);
         }
       }
 
       return ok({ ok: true, handled: "video.asset.ready" });
     }
 
-    // ------------------------------------------------------------------
     // 3) Asset errored
-    // ------------------------------------------------------------------
     if (type === "video.asset.errored") {
       const assetId: string | undefined = data?.id ?? data?.asset_id;
       if (assetId) {
@@ -269,9 +255,7 @@ export async function POST(req: NextRequest) {
       return ok({ ok: true, handled: "video.asset.errored" });
     }
 
-    // ------------------------------------------------------------------
     // 4) Asset deleted
-    // ------------------------------------------------------------------
     if (type === "video.asset.deleted") {
       const assetId: string | undefined = data?.id ?? data?.asset_id;
       if (assetId) {
@@ -284,11 +268,9 @@ export async function POST(req: NextRequest) {
       return ok({ ok: true, handled: "video.asset.deleted" });
     }
 
-    // Ignore others
     return ok({ ok: true, handled: "ignored", type });
   } catch (err: any) {
     console.error("mux-webhook error:", err?.message || err);
-    // Return 200 to avoid repeated retries; logs capture the issue.
     return ok({ ok: true, note: "handled with error" });
   }
 }
