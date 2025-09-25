@@ -10,7 +10,8 @@ export const dynamic = "force-dynamic";
 const STRIPE_SECRET_KEY = process.env.STRIPE_SECRET_KEY!;
 const WEBHOOK_SECRET = process.env.STRIPE_WEBHOOK_SECRET_REVIEW!;
 
-const stripe = new Stripe(STRIPE_SECRET_KEY, { apiVersion: "2024-06-20" });
+// Match the SDK's accepted version union for TS
+const stripe = new Stripe(STRIPE_SECRET_KEY, { apiVersion: "2023-10-16" });
 
 // Stripe needs the RAW body for signature verification
 export async function POST(req: NextRequest) {
