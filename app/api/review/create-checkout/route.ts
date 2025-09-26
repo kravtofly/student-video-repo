@@ -1,123 +1,123 @@
 // app/api/review/create-checkout/route.ts
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest } from "next/server";
 import Stripe from "stripe";
-import { supabaseAdmin } from "@/lib/supabase";
+import crypto from "node:crypto";
+import { supabaseAdmin } from "@/lib/supabase"; // used to look up coach data
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-// Stripe SDK pinned to a TS-accepted version string
-const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!, { apiVersion: "2023-10-16" });
+// --- Configure your platform fee here (e.g., 15% = 0.15) ---
+const PLATFORM_FEE_PCT = 0.15 as const;
+
+// Helper: load coach’s Stripe/Cal/pricing from your DB (stub for now)
+async function getCoach(coachId: string) {
+  // TODO: replace with your actual table/columns
+  // Expecting: stripe_account_id, cal_username, deep_event_slug, quick_price_cents, deep_price_cents
+  const { data, error } = await supabaseAdmin
+    .from("coaches")
+    .select("id, name, slug, stripe_account_id, cal_username, deep_event_slug, quick_price_cents, deep_price_cents")
+    .eq("id", coachId)
+    .single();
+
+  if (error || !data) throw new Error("Coach not found");
+  return data as {
+    id: string;
+    name: string;
+    slug: string | null;
+    stripe_account_id: string;
+    cal_username: string | null;
+    deep_event_slug: string | null;
+    quick_price_cents: number;
+    deep_price_cents: number;
+  };
+}
+
+const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!, {
+  apiVersion: "2025-04-30.acacia",
+});
+
 const APP_URL = process.env.PUBLIC_APP_URL || "https://student-video-repo.vercel.app";
+const KRAV_SITE = "https://www.kravtofly.com";
 
 type Body = {
-  studentEmail: string;
-  studentName?: string;
-
-  coachId: string;
-  coachName?: string;
-  coachEmail?: string;
-
-  currency?: "usd";
-  unitPriceCents: number; // per-video price (snapshot)
-  numVideos: number;
-
-  oneOnOne?: boolean;
-  oneOnOnePriceCents?: number;
-
-  publicDefault?: boolean; // default publish to library
-  termsAccepted?: boolean;
-  termsVersion?: string;
+  // From Webflow or your own page
+  offer: "quick" | "deep";         // which button they clicked
+  coachId: string;                 // the coach they chose
+  studentEmail?: string;           // optional prefill
+  studentName?: string;            // optional prefill
 };
 
 export async function POST(req: NextRequest) {
   try {
-    const b = (await req.json()) as Body;
-
-    if (!b.studentEmail || !b.coachId || !b.unitPriceCents || !b.numVideos) {
-      return NextResponse.json({ error: "missing required fields" }, { status: 400 });
+    const { offer, coachId, studentEmail, studentName } = (await req.json()) as Body;
+    if (!offer || !coachId) {
+      return Response.json({ error: "offer and coachId are required" }, { status: 400 });
     }
 
-    const currency = b.currency || "usd";
-    const oneOnOne = !!b.oneOnOne;
+    const coach = await getCoach(coachId);
 
-    // 1) Create the order row
-    const { data: order, error } = await supabaseAdmin
-      .from("review_orders")
-      .insert({
-        student_email: b.studentEmail,
-        student_name: b.studentName ?? null,
-        coach_id: b.coachId,
-        coach_name: b.coachName ?? null,
-        coach_email: b.coachEmail ?? null,
-        currency,
-        unit_price_cents: b.unitPriceCents,
-        num_videos: b.numVideos,
-        one_on_one: oneOnOne,
-        one_on_one_price_cents: oneOnOne ? (b.oneOnOnePriceCents ?? 0) : null,
-        status: "checkout_pending",
-        public_default: b.publicDefault ?? true,
-        terms_version: b.termsVersion ?? null,
-        terms_accepted_at: b.termsAccepted ? new Date().toISOString() : null,
-      })
-      .select("*")
-      .single();
+    const unitPrice =
+      offer === "deep" ? coach.deep_price_cents : coach.quick_price_cents;
 
-    if (error || !order) {
-      return NextResponse.json({ error: error?.message || "db insert failed" }, { status: 500 });
+    if (!unitPrice || unitPrice < 100) {
+      return Response.json({ error: "Coach price not configured" }, { status: 400 });
     }
 
-    // 2) Build Checkout Session
-    const line_items: Stripe.Checkout.SessionCreateParams.LineItem[] = [
-      {
-        quantity: b.numVideos,
-        price_data: {
-          currency,
-          unit_amount: b.unitPriceCents,
-          product_data: {
-            name: `Video Review by ${b.coachName || "Coach"}`,
-            description: `Personalized feedback (${b.numVideos} video${b.numVideos > 1 ? "s" : ""})`,
-            metadata: { coach_id: b.coachId },
-          },
-        },
-      },
-    ];
-
-    if (oneOnOne && (b.oneOnOnePriceCents || 0) > 0) {
-      line_items.push({
-        quantity: 1,
-        price_data: {
-          currency,
-          unit_amount: b.oneOnOnePriceCents!,
-          product_data: {
-            name: "One-on-One Debrief",
-            description: "Live video call with your coach",
-            metadata: { coach_id: b.coachId },
-          },
-        },
-      });
+    if (!coach.stripe_account_id) {
+      return Response.json({ error: "Coach is not connected to Stripe" }, { status: 400 });
     }
+
+    // Generate an orderId now and carry it end-to-end
+    const orderId = crypto.randomUUID();
+
+    // Calculate platform fee
+    const application_fee_amount = Math.round(unitPrice * PLATFORM_FEE_PCT);
+
+    // We'll always return to a small handler page that verifies payment, creates ReviewOrder and redirects
+    const successUrl = `${APP_URL}/review/after-checkout?session_id={CHECKOUT_SESSION_ID}`;
+    const cancelUrl = `${KRAV_SITE}/coaches/${coach.slug ?? coach.id}`;
 
     const session = await stripe.checkout.sessions.create({
       mode: "payment",
-      customer_email: b.studentEmail,
-      line_items,
-      metadata: {
-        review_order_id: order.id,
+      customer_email: studentEmail,
+      allow_promotion_codes: true,
+      submit_type: "pay",
+      payment_intent_data: {
+        transfer_data: { destination: coach.stripe_account_id },
+        application_fee_amount,
       },
-      success_url: `${APP_URL}/review/upload?token=${order.upload_token.toString()}`,
-      cancel_url: `${APP_URL}/review/cancelled`,
+      line_items: [
+        {
+          quantity: 1,
+          price_data: {
+            currency: "usd",
+            unit_amount: unitPrice,
+            product_data: {
+              name: offer === "deep" ? "Deep Dive + 1-on-1" : "Quick Video Review",
+              metadata: {
+                coachId,
+                offer,
+              },
+            },
+          },
+        },
+      ],
+      success_url: successUrl,
+      cancel_url: cancelUrl,
+      metadata: {
+        orderId,
+        offer,
+        coachId,
+        coachName: coach.name ?? "",
+        studentName: studentName ?? "",
+        studentEmail: studentEmail ?? "",
+      },
     });
 
-    // 3) Save session id
-    await supabaseAdmin
-      .from("review_orders")
-      .update({ stripe_session_id: session.id })
-      .eq("id", order.id);
-
-    return NextResponse.json({ url: session.url }, { status: 200 });
-  } catch (e: any) {
-    console.error("create-checkout error:", e?.message || e);
-    return NextResponse.json({ error: "server error" }, { status: 500 });
+    return Response.json({ url: session.url, orderId });
+  } catch (err: any) {
+    console.error("create-checkout error", err?.message || err);
+    return Response.json({ error: "server error" }, { status: 500 });
   }
 }
