@@ -2,18 +2,16 @@
 import type { NextRequest } from "next/server";
 import crypto from "node:crypto";
 import { supabaseAdmin } from "@/lib/supabase";
-import { video } from "@/lib/mux"; // uses MUX_TOKEN_ID/SECRET
+import { video } from "@/lib/mux";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 const WEBHOOK_SECRET = process.env.MUX_WEBHOOK_SECRET!;
-const TOLERANCE_SECONDS = 300; // 5 minutes
+const TOLERANCE_SECONDS = 300;
 
-const asUUID = (v?: string | null) =>
-  !!(v && /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$/.test(v))
-    ? v
-    : null;
+const isUUID = (v?: string | null) =>
+  !!(v && /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$/.test(v));
 
 function verifyMuxSignature(raw: string, sigHeader: string | null, secret: string): boolean {
   if (!sigHeader) return false;
@@ -35,7 +33,6 @@ function verifyMuxSignature(raw: string, sigHeader: string | null, secret: strin
 
   const now = Math.floor(Date.now() / 1000);
   if (Math.abs(now - Number(t)) > TOLERANCE_SECONDS) return false;
-
   return true;
 }
 
@@ -56,6 +53,16 @@ function ok(json: any, status = 200) {
   });
 }
 
+type ReviewOrder = {
+  id: string;
+  student_name: string | null;
+  student_email: string | null;
+  student_user_id?: string | null;
+  coach_user_id?: string | null;
+  lab_id?: string | null;
+  offer_type?: string | null;
+};
+
 export async function POST(req: NextRequest) {
   try {
     if (!WEBHOOK_SECRET) return ok({ error: "webhook secret not configured" }, 500);
@@ -72,200 +79,111 @@ export async function POST(req: NextRequest) {
     const object: any = evt?.object ?? {};
 
     async function writeByUploadOrAsset(params: {
-      uploadId?: string;
+      uploadId?: string | null;
       assetId: string;
-      status?: string;
-      filename?: string | null;
-      ownerId?: string | null;
-      ownerEmail?: string | null;
-      ownerName?: string | null;
-      coachId?: string | null;
-      labId?: string | null;
-      weekNumber?: number | null;
-      level?: string | null;
-      kind?: string | null;
-      disciplines?: string[] | null;
-      reviewOrderId?: string | null;
-      playbackId?: string | null;
+      set: Record<string, any>;
     }) {
-      const {
-        uploadId,
-        assetId,
-        status,
-        filename,
-        ownerId,
-        ownerEmail,
-        ownerName,
-        coachId,
-        labId,
-        weekNumber,
-        level,
-        kind,
-        disciplines,
-        reviewOrderId,
-        playbackId,
-      } = params;
+      const { uploadId, assetId, set } = params;
 
       if (uploadId) {
         const { data: updated, error: upErr } = await supabaseAdmin
           .from("videos")
-          .update({
-            asset_id: assetId,
-            playback_id: playbackId ?? null,
-            status: status ?? null,
-            ...(filename ? { filename, title: filename } : {}),
-            ...(ownerId ? { owner_id: ownerId } : {}),
-            ...(ownerEmail ? { owner_email: ownerEmail } : {}),
-            ...(ownerName ? { owner_name: ownerName } : {}),
-            ...(coachId ? { coach_id: coachId } : {}),
-            ...(labId ? { lab_id: labId } : {}),
-            ...(typeof weekNumber === "number" ? { week_number: weekNumber } : {}),
-            ...(level ? { level } : {}),
-            ...(kind ? { kind } : {}),
-            ...(disciplines ? { disciplines } : {}),
-            ...(reviewOrderId ? { review_order_id: asUUID(reviewOrderId) } : {}),
-          })
+          .update(set)
           .eq("upload_id", uploadId)
           .select("id");
 
-        if (upErr) {
-          console.error("update by upload_id error:", upErr);
-        } else if (updated && updated.length > 0) {
-          return true;
-        }
+        if (!upErr && updated && updated.length > 0) return true;
+        if (upErr) console.error("mux-webhook: update by upload_id error:", upErr);
       }
 
       const { error: insErr } = await supabaseAdmin
         .from("videos")
-        .upsert(
-          {
-            asset_id: assetId,
-            upload_id: uploadId ?? null,
-            playback_id: playbackId ?? null,
-            status: status ?? null,
-            filename: filename ?? null,
-            title: filename ?? null,
-            owner_id: ownerId ?? null,
-            owner_email: ownerEmail ?? null,
-            owner_name: ownerName ?? null,
-            coach_id: coachId ?? null,
-            lab_id: labId ?? null,
-            week_number: weekNumber ?? null,
-            level: level ?? null,
-            kind: kind ?? null,
-            disciplines: disciplines ?? null,
-            review_order_id: asUUID(reviewOrderId),
-          },
-          { onConflict: "asset_id" }
-        );
-      if (insErr) console.error("upsert by asset_id error:", insErr);
+        .upsert({ asset_id: assetId, ...set }, { onConflict: "asset_id" });
 
+      if (insErr) console.error("mux-webhook: upsert by asset_id error:", insErr);
       return true;
     }
 
-    // 1) Asset created
+    // asset created (two variants)
     if (type === "video.upload.asset_created" || type === "video.asset.created") {
       const uploadId: string | undefined =
         object?.type === "upload" ? object?.id : data?.upload_id;
       const assetId: string | undefined = data?.asset_id ?? data?.id;
+      if (!assetId) return ok({ ok: true, handled: "ignored_no_asset" });
 
-      let meta: any = {};
+      let filename: string | null = null;
+      let reviewOrderId: string | null = null;
       try {
-        meta = data?.passthrough ? JSON.parse(data.passthrough) : {};
+        const meta = data?.passthrough ? JSON.parse(data.passthrough) : {};
+        filename = meta?.filename ?? null;
+        reviewOrderId = meta?.reviewOrderId ?? null;
+      } catch {
+        // ignore
+      }
+
+      // Load review order (if present)
+      let order: ReviewOrder | null = null;
+      if (reviewOrderId) {
+        const { data: ro } = await supabaseAdmin
+          .from("review_orders")
+          .select(
+            "id, student_name, student_email, student_user_id, coach_user_id, lab_id, offer_type"
+          )
+          .eq("id", reviewOrderId)
+          .single<ReviewOrder>();
+        order = ro || null;
+      }
+
+      // Playback id now or later (ok to try here)
+      let signedPid: string | null = null;
+      try {
+        signedPid = await ensureSignedPlaybackId(assetId);
       } catch (e) {
-        console.warn("Failed to parse passthrough:", e);
+        console.warn("ensureSignedPlaybackId (created) failed:", e);
       }
 
-      if (assetId) {
-        let signedPid: string | null = null;
-        try {
-          signedPid = await ensureSignedPlaybackId(assetId);
-        } catch (e) {
-          console.warn("ensureSignedPlaybackId (created) failed:", e);
-        }
-
-        await writeByUploadOrAsset({
-          uploadId,
-          assetId,
-          status: "processing",
-          filename: meta.filename ?? null,
-          ownerId: meta.userId ?? null,
-          ownerEmail: meta.ownerEmail ?? null,
-          ownerName: meta.ownerName ?? null,
-          coachId: meta.coachId ?? null,
-          labId: meta.labId ?? null,
-          weekNumber: typeof meta.weekNumber === "number" ? meta.weekNumber : null,
-          level: meta.level ?? null,
-          kind: meta.kind ?? null,
-          disciplines: Array.isArray(meta.disciplines) ? meta.disciplines : null,
-          reviewOrderId: meta.reviewOrderId ?? null,
-          playbackId: signedPid,
-        });
+      const set: Record<string, any> = {
+        asset_id: assetId,
+        playback_id: signedPid ?? null,
+        status: "uploading",                // <-- stay within your CHECK constraint
+        review_order_id: reviewOrderId ?? null,
+      };
+      if (filename) {
+        set.filename = filename;
+        set.title = filename;
+      }
+      if (order) {
+        set.owner_name = order.student_name ?? null;
+        set.owner_email = order.student_email ?? null;
+        if (isUUID(order.student_user_id)) set.owner_id = order.student_user_id;
+        if (isUUID(order.coach_user_id)) set.coach_id = order.coach_user_id;
+        if (order.lab_id) set.lab_id = order.lab_id;
+        if (order.offer_type) set.kind = order.offer_type;
       }
 
+      await writeByUploadOrAsset({ uploadId, assetId, set });
       return ok({ ok: true, handled: type });
     }
 
-    // 2) Asset ready
+    // asset ready
     if (type === "video.asset.ready") {
       const assetId: string | undefined = data?.id ?? data?.asset_id;
-      if (assetId) {
-        let signedPid: string | null = null;
-        try {
-          signedPid = await ensureSignedPlaybackId(assetId);
-        } catch (e) {
-          console.warn("ensureSignedPlaybackId (ready) failed:", e);
-        }
+      if (!assetId) return ok({ ok: true, handled: "ignored_no_asset" });
 
-        const { error } = await supabaseAdmin
-          .from("videos")
-          .update({ status: "ready", playback_id: signedPid })
-          .eq("asset_id", assetId);
-        if (error) console.error("update status=ready error:", error);
-
-        // (Quietly) check if tied to a review order
-        const { data: vrow, error: readErr } = await supabaseAdmin
-          .from("videos")
-          .select("review_order_id")
-          .eq("asset_id", assetId)
-          .maybeSingle(); // avoid 406 when zero rows
-
-        if (!readErr && vrow?.review_order_id) {
-          await supabaseAdmin
-            .from("review_orders")
-            .update({ status: "in_review" })
-            .eq("id", vrow.review_order_id)
-            .in("status", ["paid", "uploading"]);
-        }
+      let signedPid: string | null = null;
+      try {
+        signedPid = await ensureSignedPlaybackId(assetId);
+      } catch (e) {
+        console.warn("ensureSignedPlaybackId (ready) failed:", e);
       }
 
+      const { error } = await supabaseAdmin
+        .from("videos")
+        .update({ status: "ready", playback_id: signedPid ?? null })
+        .eq("asset_id", assetId);
+
+      if (error) console.error("update status=ready error:", error);
       return ok({ ok: true, handled: "video.asset.ready" });
-    }
-
-    // 3) Asset errored
-    if (type === "video.asset.errored") {
-      const assetId: string | undefined = data?.id ?? data?.asset_id;
-      if (assetId) {
-        const { error } = await supabaseAdmin
-          .from("videos")
-          .update({ status: "errored" })
-          .eq("asset_id", assetId);
-        if (error) console.error("update status=errored error:", error);
-      }
-      return ok({ ok: true, handled: "video.asset.errored" });
-    }
-
-    // 4) Asset deleted
-    if (type === "video.asset.deleted") {
-      const assetId: string | undefined = data?.id ?? data?.asset_id;
-      if (assetId) {
-        const { error } = await supabaseAdmin
-          .from("videos")
-          .update({ status: "deleted", playback_id: null })
-          .eq("asset_id", assetId);
-        if (error) console.error("update status=deleted error:", error);
-      }
-      return ok({ ok: true, handled: "video.asset.deleted" });
     }
 
     return ok({ ok: true, handled: "ignored", type });
