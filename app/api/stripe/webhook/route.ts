@@ -11,7 +11,7 @@ const STRIPE_SECRET_KEY = process.env.STRIPE_SECRET_KEY!;
 const WEBHOOK_SECRET = process.env.STRIPE_WEBHOOK_SECRET_REVIEW!;
 
 // Match the SDK's accepted version union for TS
-const stripe = new Stripe(STRIPE_SECRET_KEY, { apiVersion: "2023-10-16" });
+const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!);
 
 // Stripe needs the RAW body for signature verification
 export async function POST(req: NextRequest) {
