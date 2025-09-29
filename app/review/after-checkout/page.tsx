@@ -6,9 +6,7 @@ import { supabaseAdmin } from "@/lib/supabase";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!, {
-  apiVersion: "2025-04-30.acacia",
-});
+const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!);
 
 const APP_URL = process.env.PUBLIC_APP_URL || "https://student-video-repo.vercel.app";
 const KRAV_UPLOAD_URL = "https://www.kravtofly.com/review/upload"; // Webflow upload page
