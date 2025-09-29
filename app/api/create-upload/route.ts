@@ -1,139 +1,98 @@
 // app/api/create-upload/route.ts
-import { NextRequest, NextResponse } from "next/server";
-import { video } from "@/lib/mux";          // uses MUX_TOKEN_ID/SECRET
+import { NextRequest } from "next/server";
+import { video } from "@/lib/mux";
 import { supabaseAdmin } from "@/lib/supabase";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-// Allow your prod domains + localhost (Mux direct upload CORS)
-const ALLOWED = new Set([
-  "https://www.kravtofly.com",
-  "https://kravtofly.com",
-  "http://localhost:3000",
-]);
-
 const isUUID = (v?: string | null) =>
   !!(v && /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$/.test(v));
-const asEmail = (s?: string) => (s && /\S+@\S+\.\S+/.test(s) ? s : null);
-const toLevel = (s?: string | null) =>
-  s && ["Beginner", "Intermediate", "Advanced", "Ninja"].includes(s) ? (s as any) : null;
-const toKind = (s?: string | null) =>
-  s && ["Tunnel", "Sky"].includes(s) ? (s as any) : null;
-const toDisciplines = (arr?: unknown): string[] =>
-  Array.isArray(arr)
-    ? arr
-        .map(String)
-        .filter((v) =>
-          [
-            "VFS","Tracking","Relative Work","Flocking","CRW","Camera Flying","BASE",
-            "Angle Flying","Competition/Team Dynamics","Freestyle","Wingsuiting",
-            "Canopy Piloting","Head Down","Head Up","Backflying","Freeflying",
-            "Movement","Belly","Tunnel L1","Tunnel L2","Tunnel L3 Static","Tunnel L3 Dynamic",
-            "Tunnel L4 Static","Tunnel L4 Dynamic","Tunnel Pro Flying",
-          ].includes(v)
-        )
-    : [];
 
-type Body = {
-  filename?: string;
-  userId?: string;              // keep if you’re passing it
-  ownerEmail?: string;
-  ownerName?: string;
-  coachId?: string;
-  labId?: string;
-  weekNumber?: number;
-  level?: "Beginner" | "Intermediate" | "Advanced" | "Ninja";
-  kind?: "Tunnel" | "Sky";
-  disciplines?: string[];       // from the approved list above
-  reviewOrderId?: string;       // <-- NEW: link to review_orders.id (UUID)
+type ReviewOrder = {
+  id: string;
+  upload_token: string | null;
+  upload_expires_at: string | null;
+  student_name: string | null;
+  student_email: string | null;
+  student_user_id?: string | null;
+  coach_user_id?: string | null;
+  lab_id?: string | null;
+  offer_type?: string | null;
 };
+
+function bad(status: number, msg: string) {
+  return new Response(JSON.stringify({ error: msg }), {
+    status,
+    headers: { "content-type": "application/json" },
+  });
+}
 
 export async function POST(req: NextRequest) {
   try {
-    const body = (await req.json().catch(() => ({}))) as Body;
+    const body = await req.json().catch(() => ({}));
+    const filename: string | null = body?.filename ?? null;
+    const reviewOrderId: string | null = body?.reviewOrderId ?? null;
+    const token: string | null = body?.token ?? null;
 
-    const {
-      filename,
-      userId,
-      ownerEmail,
-      ownerName,
-      coachId,
-      labId,
-      weekNumber,
-      level,
-      kind,
-      disciplines,
-      reviewOrderId, // <- NEW
-    } = body;
+    if (!reviewOrderId || !token) {
+      return bad(400, "Missing reviewOrderId or token");
+    }
 
-    // Choose a safe cors_origin for Mux direct upload
-    const reqOrigin = req.headers.get("origin") || "";
-    const corsOrigin =
-      ALLOWED.has(reqOrigin) || reqOrigin.endsWith(".vercel.app")
-        ? reqOrigin
-        : "https://www.kravtofly.com";
+    // Load & validate review order
+    const { data: order, error: orderErr } = await supabaseAdmin
+      .from("review_orders")
+      .select(
+        "id, upload_token, upload_expires_at, student_name, student_email, student_user_id, coach_user_id, lab_id, offer_type"
+      )
+      .eq("id", reviewOrderId)
+      .single<ReviewOrder>();
 
-    // 1) Create the Mux Direct Upload (asset has signed playback policy)
+    if (orderErr || !order) return bad(404, "Review order not found");
+    if (!order.upload_token || order.upload_token !== token) return bad(403, "Invalid upload token");
+    if (order.upload_expires_at && Date.now() > new Date(order.upload_expires_at).getTime()) {
+      return bad(403, "Upload link expired");
+    }
+
+    // Mux direct upload with passthrough
+    const passthrough = JSON.stringify({
+      filename: filename || undefined,
+      reviewOrderId: order.id,
+    });
+
     const upload = await video.uploads.create({
-      cors_origin: corsOrigin,
+      cors_origin: "https://www.kravtofly.com",
       new_asset_settings: {
         playback_policy: ["signed"],
-        passthrough: JSON.stringify({
-          filename,
-          userId,
-          ownerEmail,
-          ownerName,
-          coachId,
-          labId,
-          weekNumber,
-          level: toLevel(level),
-          kind: toKind(kind),
-          disciplines: toDisciplines(disciplines),
-          reviewOrderId: isUUID(reviewOrderId) ? reviewOrderId : null, // <- carry through
-        }),
+        passthrough,
       },
     });
 
-    // 2) Upsert the row immediately so the webhook can "update by upload_id"
-    await supabaseAdmin.from("videos").upsert(
-      {
-        upload_id: (upload as any).id,
-        filename: filename ?? null,
-        title: filename ?? null,
+    // Upsert a safe placeholder row
+    const row: Record<string, any> = {
+      upload_id: upload.id,
+      filename: filename ?? null,
+      title: filename ?? null,
+      status: "uploading",          // <-- stays within your constraint
+      review_order_id: order.id,
+      owner_name: order.student_name ?? null,
+      owner_email: order.student_email ?? null,
+    };
 
-        // owner/user metadata
-        owner_id: userId ?? null, // leave as-is if you’re using elsewhere
-        owner_email: asEmail(ownerEmail),
-        owner_name: ownerName ?? null,
+    if (isUUID(order.student_user_id)) row.owner_id = order.student_user_id;
+    if (isUUID(order.coach_user_id)) row.coach_id = order.coach_user_id;
+    if (order.lab_id) row.lab_id = order.lab_id;           // TEXT column
+    if (order.offer_type) row.kind = order.offer_type;     // TEXT column
 
-        // relationships
-        coach_id: coachId ?? null,
-        lab_id: labId ?? null,
-        week_number: typeof weekNumber === "number" ? weekNumber : null,
-        review_order_id: isUUID(reviewOrderId) ? reviewOrderId : null, // <- NEW
+    const { error: upErr } = await supabaseAdmin.from("videos").upsert(row, { onConflict: "upload_id" });
+    if (upErr) {
+      console.error("videos upsert (create-upload) error:", upErr);
+      return bad(500, "Database error");
+    }
 
-        // tags
-        level: toLevel(level),
-        kind: toKind(kind),
-        disciplines: toDisciplines(disciplines),
-
-        // status
-        status: "uploading",
-      },
-      { onConflict: "upload_id" }
-    );
-
-    return NextResponse.json({
-      uploadUrl: (upload as any).url,
-      uploadId: (upload as any).id,
-      corsOrigin,
-    });
+    return Response.json({ uploadUrl: upload.url, uploadId: upload.id });
   } catch (err: any) {
     console.error("create-upload error", err?.message || err);
-    return new NextResponse(JSON.stringify({ error: "server error" }), {
-      status: 500,
-      headers: { "content-type": "application/json" },
-    });
+    return bad(500, "Server error");
   }
 }
