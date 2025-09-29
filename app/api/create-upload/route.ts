@@ -1,98 +1,111 @@
 // app/api/create-upload/route.ts
 import { NextRequest } from "next/server";
-import { video } from "@/lib/mux";
+import { video } from "@/lib/mux";           // your Mux SDK wrapper (uses MUX_TOKEN_ID/SECRET)
 import { supabaseAdmin } from "@/lib/supabase";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-const isUUID = (v?: string | null) =>
-  !!(v && /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$/.test(v));
+const toUUID = (v?: string | null) =>
+  v && /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$/.test(v)
+    ? v
+    : null;
 
-type ReviewOrder = {
-  id: string;
-  upload_token: string | null;
-  upload_expires_at: string | null;
-  student_name: string | null;
-  student_email: string | null;
-  student_user_id?: string | null;
-  coach_user_id?: string | null;
-  lab_id?: string | null;
-  offer_type?: string | null;
+type Body = {
+  filename?: string;
+  // student identity (prefer UUID if you have it, else name/email)
+  ownerId?: string | null;
+  ownerName?: string | null;
+  ownerEmail?: string | null;
+
+  // coach identity: either UUID (future) OR a text reference (today)
+  coachId?: string | null;
+  coachRef?: string | null;
+
+  // optional context
+  labId?: string | null;
+  weekNumber?: number | null;
+  level?: string | null;            // "Beginner" | "Intermediate" | "Advanced" | "Ninja"
+  disciplines?: string[] | null;    // e.g. ["VFS","Belly"]
+  kind?: string | null;             // "Tunnel" | "Sky"
+  reviewOrderId?: string | null;    // UUID from the “review order” flow
 };
-
-function bad(status: number, msg: string) {
-  return new Response(JSON.stringify({ error: msg }), {
-    status,
-    headers: { "content-type": "application/json" },
-  });
-}
 
 export async function POST(req: NextRequest) {
   try {
-    const body = await req.json().catch(() => ({}));
-    const filename: string | null = body?.filename ?? null;
-    const reviewOrderId: string | null = body?.reviewOrderId ?? null;
-    const token: string | null = body?.token ?? null;
+    const body = (await req.json()) as Body;
 
-    if (!reviewOrderId || !token) {
-      return bad(400, "Missing reviewOrderId or token");
-    }
+    const filename = body.filename ?? "upload";
+    const ownerId = toUUID(body.ownerId ?? null);
+    const coachId = toUUID(body.coachId ?? null);
+    const coachRef = (body.coachRef ?? null) || null;
 
-    // Load & validate review order
-    const { data: order, error: orderErr } = await supabaseAdmin
-      .from("review_orders")
-      .select(
-        "id, upload_token, upload_expires_at, student_name, student_email, student_user_id, coach_user_id, lab_id, offer_type"
-      )
-      .eq("id", reviewOrderId)
-      .single<ReviewOrder>();
+    const ownerName = body.ownerName ?? null;
+    const ownerEmail = body.ownerEmail ?? null;
 
-    if (orderErr || !order) return bad(404, "Review order not found");
-    if (!order.upload_token || order.upload_token !== token) return bad(403, "Invalid upload token");
-    if (order.upload_expires_at && Date.now() > new Date(order.upload_expires_at).getTime()) {
-      return bad(403, "Upload link expired");
-    }
+    const labId = body.labId ?? null;
+    const weekNumber = body.weekNumber ?? null;
+    const level = body.level ?? null;
+    const kind = body.kind ?? null;
 
-    // Mux direct upload with passthrough
-    const passthrough = JSON.stringify({
-      filename: filename || undefined,
-      reviewOrderId: order.id,
-    });
+    const disciplines = Array.isArray(body.disciplines)
+      ? body.disciplines.map(String)
+      : null;
 
+    // 1) Create a Mux direct upload. Include all context in passthrough.
     const upload = await video.uploads.create({
       cors_origin: "https://www.kravtofly.com",
       new_asset_settings: {
         playback_policy: ["signed"],
-        passthrough,
+        passthrough: JSON.stringify({
+          filename,
+          ownerId, ownerName, ownerEmail,
+          coachId, coachRef,
+          labId, weekNumber, level, disciplines, kind,
+          reviewOrderId: body.reviewOrderId ?? null,
+        }),
       },
     });
 
-    // Upsert a safe placeholder row
-    const row: Record<string, any> = {
-      upload_id: upload.id,
-      filename: filename ?? null,
-      title: filename ?? null,
-      status: "uploading",          // <-- stays within your constraint
-      review_order_id: order.id,
-      owner_name: order.student_name ?? null,
-      owner_email: order.student_email ?? null,
-    };
+    // 2) Upsert a “placeholder” row keyed by upload_id (status=uploading)
+    const { error } = await supabaseAdmin.from("videos").upsert(
+      {
+        upload_id: upload.id,
+        filename,
+        title: filename,
+        status: "uploading",
 
-    if (isUUID(order.student_user_id)) row.owner_id = order.student_user_id;
-    if (isUUID(order.coach_user_id)) row.coach_id = order.coach_user_id;
-    if (order.lab_id) row.lab_id = order.lab_id;           // TEXT column
-    if (order.offer_type) row.kind = order.offer_type;     // TEXT column
+        // student (UUID only if valid)
+        owner_id: ownerId,
+        owner_name: ownerName,
+        owner_email: ownerEmail,
 
-    const { error: upErr } = await supabaseAdmin.from("videos").upsert(row, { onConflict: "upload_id" });
-    if (upErr) {
-      console.error("videos upsert (create-upload) error:", upErr);
-      return bad(500, "Database error");
+        // coach (prefer UUID, else text ref)
+        coach_id: coachId,
+        coach_ref: coachRef,
+
+        // context
+        lab_id: labId,
+        week_number: weekNumber,
+        level,
+        kind,
+        disciplines,
+        review_order_id: toUUID(body.reviewOrderId ?? null),
+      },
+      { onConflict: "upload_id" }
+    );
+
+    if (error) {
+      console.error("create-upload upsert error:", error);
+      return Response.json({ error: "database error" }, { status: 500 });
     }
 
     return Response.json({ uploadUrl: upload.url, uploadId: upload.id });
   } catch (err: any) {
-    console.error("create-upload error", err?.message || err);
-    return bad(500, "Server error");
+    console.error("create-upload error:", err?.message || err);
+    return new Response(JSON.stringify({ error: "server error" }), {
+      status: 500,
+      headers: { "content-type": "application/json" },
+    });
   }
 }
