@@ -1,4 +1,3 @@
-// app/api/videos/[id]/mark-uploaded/route.ts
 import type { NextRequest } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
 
@@ -12,10 +11,7 @@ function json(data: unknown, status = 200) {
   });
 }
 
-export async function POST(
-  _req: NextRequest,
-  { params }: { params: { id: string } }
-) {
+export async function POST(_req: NextRequest, { params }: { params: { id: string } }) {
   const id = params?.id;
   if (!id) return json({ error: "missing id" }, 400);
 
