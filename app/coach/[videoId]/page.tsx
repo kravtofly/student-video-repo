@@ -1,5 +1,7 @@
-// Server component
+// app/coach/[videoId]/page.tsx
 import { supabaseAdmin } from "@/lib/supabase";
+import CoachReviewClient from "./CoachReviewClient";
+
 export const dynamic = "force-dynamic";
 
 export default async function CoachVideoPage({
@@ -22,7 +24,6 @@ export default async function CoachVideoPage({
         {video.owner_name ? `${video.owner_name} • ` : ""}
         {video.discipline || "—"} — {video.description || "No description"}
       </p>
-      {/* @ts-expect-error Server-to-Client boundary */}
       <CoachReviewClient
         videoId={video.id}
         playbackId={video.mux_playback_id}
@@ -30,6 +31,3 @@ export default async function CoachVideoPage({
     </div>
   );
 }
-
-// Lazy import client component to keep this file small
-import CoachReviewClient from "./CoachReviewClient";
