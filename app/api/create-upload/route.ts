@@ -1,23 +1,30 @@
 // app/api/create-upload/route.ts
 import type { NextRequest } from "next/server";
-import { video } from "@/lib/mux";          // your existing Mux client (uses MUX_TOKEN_ID/SECRET)
-import { supabaseAdmin } from "@/lib/supabase"; // your existing Supabase admin client
+import { video } from "@/lib/mux";               // your Mux client
+import { supabaseAdmin } from "@/lib/supabase";  // your Supabase admin client
 
 export const runtime = "nodejs";
-export const dynamic = "force-dynamic"; // avoid any static rendering
+export const dynamic = "force-dynamic";
 
 type Body = {
   filename?: string;
-  reviewOrderId?: string; // UUID
-  uploadToken?: string;   // random string
+  reviewOrderId?: string;       // UUID
+  uploadToken?: string;         // string
   ownerName?: string;
   ownerEmail?: string;
-  coachRef?: string;      // TEXT (slug or CMS id) — NOT a UUID
+  coachRef?: string;            // display-only, not trusted
   kind?: "review" | "lab" | string;
+
+  // NEW first-class questionnaire fields
+  description?: string;
+  discipline?: string;
+  workingWell?: string;
+  struggling?: string;
+  otherInfo?: string;
 };
 
-function ok(json: any, status = 200) {
-  return new Response(JSON.stringify(json), {
+function json(data: unknown, status = 200) {
+  return new Response(JSON.stringify(data), {
     status,
     headers: { "content-type": "application/json" },
   });
@@ -33,67 +40,86 @@ export async function POST(req: NextRequest) {
       ownerEmail,
       coachRef,
       kind = "review",
+      description,
+      discipline,
+      workingWell,
+      struggling,
+      otherInfo,
     } = (await req.json()) as Body;
 
     if (!reviewOrderId || !uploadToken) {
-      return ok({ error: "missing reviewOrderId or uploadToken" }, 400);
+      return json({ error: "missing reviewOrderId or uploadToken" }, 400);
     }
 
-    // (Optional but recommended) Verify the secure link against your review_orders table
-    // If your table/columns are named differently, adjust this query.
-    const { data: ro, error: roErr } = await supabaseAdmin
+    // Validate order + token (and expiry if present)
+    const { data: order, error: orderErr } = await supabaseAdmin
       .from("review_orders")
-      .select("id, upload_token")
+      .select("id, upload_token, token_expires_at, status, student_email, student_name, coach_id")
       .eq("id", reviewOrderId)
       .single();
 
-    if (roErr || !ro || ro.upload_token !== uploadToken) {
-      return ok({ error: "invalid or expired upload link" }, 403);
+    if (orderErr || !order) return json({ error: "order not found" }, 404);
+    if (order.upload_token !== uploadToken) return json({ error: "invalid token" }, 403);
+    if (order.token_expires_at && new Date(order.token_expires_at) < new Date()) {
+      return json({ error: "token expired" }, 403);
+    }
+    if (!["paid", "scheduled"].includes(order.status)) {
+      return json({ error: "order not eligible for upload" }, 400);
     }
 
-    // Create a Mux Direct Upload with a **tiny** passthrough payload (Mux max 255 bytes)
-    // Use short keys: r = reviewOrderId, t = uploadToken, v = version
+    // Choose a CORS origin for Mux Direct Upload (allowlist)
+    const origin = req.headers.get("origin") || "";
+    const allowed = [
+      "https://www.kravtofly.com",
+      "https://student-video-repo.vercel.app",
+      "http://localhost:3000",
+    ];
+    const corsOrigin = allowed.includes(origin) ? origin : "https://www.kravtofly.com";
+
+    // Create Mux Direct Upload (keep passthrough tiny)
     const upload = await video.uploads.create({
-      cors_origin: "https://www.kravtofly.com",
+      cors_origin: corsOrigin,
       new_asset_settings: {
-        playback_policy: ["signed"],
-        passthrough: JSON.stringify({ r: reviewOrderId, t: uploadToken, v: 1 }),
+        playback_policy: ["signed"], // matches your existing signed flow
+        passthrough: JSON.stringify({ r: reviewOrderId, v: 1 }),
       },
+      timeout: 3600,
     });
 
-    // Record (or upsert) the row immediately so the webhook can join by upload_id.
-    // NOTE: We write coach_ref (TEXT), not coach_id (UUID).
-    const { error: upErr } = await supabaseAdmin
-      .from("videos")
-      .upsert(
-        {
-          upload_id: upload.id,
-          status: "uploading",
-          filename: filename ?? null,
-          title: filename ?? null,
+    // Insert (or upsert) the videos row with first-class fields
+    const insert = {
+      upload_id: upload.id,
+      status: "uploading" as const,
+      filename: filename ?? null,
+      title: filename ?? null,
+      kind,
+      review_order_id: reviewOrderId,
+      owner_name: ownerName ?? order.student_name ?? null,
+      owner_email: ownerEmail ?? order.student_email ?? null,
+      coach_ref: coachRef ?? null, // display-only; real coach_id comes from order if you store it
+      // NEW questionnaire columns
+      description: description ?? null,
+      discipline: discipline ?? null,
+      working_well: workingWell ?? null,
+      struggling: struggling ?? null,
+      other_info: otherInfo ?? null,
+    };
 
-          // "Middle path" fields:
-          kind,
-          review_order_id: reviewOrderId,
-          owner_name: ownerName ?? null,
-          owner_email: ownerEmail ?? null,
-          coach_ref: coachRef ?? null, // <-- text, safe for “Chris Fikes”, “coach_kate”, CMS ref, etc.
-        },
-        { onConflict: "upload_id" }
-      );
+    // Ensure you have a UNIQUE index on videos.upload_id for this to be safe
+    const { data: row, error: upErr } = await supabaseAdmin
+      .from("videos")
+      .upsert(insert, { onConflict: "upload_id" })
+      .select("id")
+      .single();
 
     if (upErr) {
       console.error("supabase upsert error:", upErr);
-      return ok({ error: "database error" }, 500);
+      return json({ error: "database error" }, 500);
     }
 
-    return ok({ uploadUrl: upload.url, uploadId: upload.id });
+    return json({ uploadUrl: upload.url, uploadId: upload.id, videoId: row?.id });
   } catch (err: any) {
-    // Surface Mux validation errors during testing
-    const msg =
-      err?.message ||
-      (typeof err === "object" ? JSON.stringify(err) : String(err));
-    console.error("create-upload error:", msg);
-    return ok({ error: "server error" }, 500);
+    console.error("create-upload error:", err?.message || err);
+    return json({ error: "server error" }, 500);
   }
 }
