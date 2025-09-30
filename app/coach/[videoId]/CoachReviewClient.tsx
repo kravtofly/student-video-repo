@@ -14,7 +14,7 @@ export default function CoachReviewClient({
   const [newBody, setNewBody] = useState("");
   const [busy, setBusy] = useState(false);
 
-  // Sign playback on mount
+  // 1) Get a signed HLS URL for this playbackId
   useEffect(() => {
     let cancelled = false;
     async function go() {
@@ -25,11 +25,46 @@ export default function CoachReviewClient({
         body: JSON.stringify({ playbackId }),
       });
       const j = await r.json();
-      if (!cancelled && j.url) setSrc(j.url);
+      if (j?.error) {
+        console.error("mux/sign:", j.error);
+      }
+      if (!cancelled && j?.url) setSrc(j.url);
     }
     go();
     return () => { cancelled = true; };
   }, [playbackId]);
+
+  // 2) Attach stream to <video> (Safari = native HLS, Chrome/FF = hls.js)
+  useEffect(() => {
+    async function wire() {
+      const el = videoRef.current;
+      if (!el || !src) return;
+
+      // Safari/iOS: native HLS support
+      if (el.canPlayType("application/vnd.apple.mpegURL")) {
+        el.src = src;
+        return;
+      }
+
+      // Chrome/Firefox: use hls.js
+      try {
+        const mod = await import("hls.js");
+        const Hls = mod.default;
+        if (Hls.isSupported()) {
+          const hls = new Hls();
+          hls.loadSource(src);
+          hls.attachMedia(el);
+        } else {
+          // Last resort – set src (may not play on some browsers)
+          el.src = src;
+        }
+      } catch (e) {
+        console.error("hls.js attach failed:", e);
+        el.src = src;
+      }
+    }
+    wire();
+  }, [src]);
 
   // Load comments
   async function loadComments() {
@@ -37,7 +72,6 @@ export default function CoachReviewClient({
     const j = await r.json();
     setComments(j.comments || []);
   }
-
   useEffect(() => { loadComments(); }, [videoId]);
 
   function mmss(t: number) {
@@ -67,7 +101,7 @@ export default function CoachReviewClient({
       });
       const j = await r.json();
       if (j.comment) {
-        setComments((c) => [...c, j.comment].sort((a,b)=>a.t_seconds-b.t_seconds));
+        setComments((c) => [...c, j.comment].sort((a, b) => a.t_seconds - b.t_seconds));
         setNewBody("");
       } else {
         alert(j.error || "Failed to save comment");
@@ -80,13 +114,11 @@ export default function CoachReviewClient({
   return (
     <div className="grid grid-cols-1 md:grid-cols-5 gap-6">
       <div className="md:col-span-3">
-        {/* Use native video for simplicity; HLS works in Safari; for Chrome use hls.js (future) */}
         <video
           ref={videoRef}
           controls
           playsInline
           className="w-full rounded-xl border"
-          src={src}
         />
       </div>
 
@@ -111,7 +143,7 @@ export default function CoachReviewClient({
           {comments.map((c) => (
             <li key={c.id} className="p-2 border rounded-lg">
               <button
-                onClick={() => seekTo(c.t_seconds)}
+                onClick={() => seekTo(Number(c.t_seconds))}
                 className="text-sm font-mono px-2 py-1 rounded bg-gray-100 mr-2"
                 title="Jump to time"
               >
