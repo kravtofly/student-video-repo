@@ -9,7 +9,7 @@ export default async function CoachVideoPage({
 }: { params: { videoId: string } }) {
   const { data: video, error } = await supabaseAdmin
     .from("videos")
-    .select("id, mux_playback_id, owner_name, discipline, description")
+    .select("id, playback_id, owner_name, discipline, description")
     .eq("id", params.videoId)
     .single();
 
@@ -26,7 +26,7 @@ export default async function CoachVideoPage({
       </p>
       <CoachReviewClient
         videoId={video.id}
-        playbackId={video.mux_playback_id}
+        playbackId={video.playback_id}
       />
     </div>
   );
