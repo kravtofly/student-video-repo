@@ -14,6 +14,7 @@ const J = (d: unknown, s = 200) =>
 function looksBase64(s: string) {
   return s.length > 80 && !s.includes("\n") && /^[A-Za-z0-9+/=]+$/.test(s);
 }
+
 function normalizePem(raw: string) {
   let key = (raw || "").trim();
   if (looksBase64(key)) {
@@ -45,14 +46,15 @@ export async function GET(req: NextRequest) {
       key.includes("BEGIN PRIVATE KEY") || key.includes("BEGIN RSA PRIVATE KEY");
     if (!hasPem) return J({ error: "BAD_KEY_FORMAT" }, 500);
 
-    // Same canonical payload (no `sub`)
+    // FIXED: Added sub: pid
     const token = jwt.sign(
-      { aud: "v" },
+      { aud: "v", sub: pid },
       key,
       { algorithm: "RS256", expiresIn: "1h", keyid: keyId }
     );
 
     const decoded: any = jwt.decode(token, { complete: true }) || {};
+
     return J({
       playbackId: pid,
       header: decoded.header,
