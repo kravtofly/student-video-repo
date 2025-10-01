@@ -1,19 +1,25 @@
+// app/api/mux/sign/debug/route.ts
 import type { NextRequest } from "next/server";
 import jwt from "jsonwebtoken";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-function J(d: unknown, s = 200) {
-  return new Response(JSON.stringify(d, null, 2), {
+const J = (d: unknown, s = 200) =>
+  new Response(JSON.stringify(d, null, 2), {
     status: s,
     headers: { "content-type": "application/json" },
   });
+
+function looksBase64(s: string) {
+  return s.length > 80 && !s.includes("\n") && /^[A-Za-z0-9+/=]+$/.test(s);
 }
 function normalizePem(raw: string) {
   let key = (raw || "").trim();
-  if (key.length > 80 && !key.includes("\n") && /^[A-Za-z0-9+/=]+$/.test(key)) {
-    try { key = Buffer.from(key, "base64").toString("utf8"); } catch {}
+  if (looksBase64(key)) {
+    try {
+      key = Buffer.from(key, "base64").toString("utf8");
+    } catch {}
   }
   key = key
     .replace(/BEGIN_PRIVATE_KEY/g, "BEGIN PRIVATE KEY")
@@ -25,26 +31,33 @@ function normalizePem(raw: string) {
 }
 
 export async function GET(req: NextRequest) {
-  const pid = new URL(req.url).searchParams.get("pid") || "";
+  const url = new URL(req.url);
+  const pid = url.searchParams.get("pid") || "";
   if (!pid) return J({ error: "MISSING_PLAYBACK_ID" }, 400);
 
-  const kid = process.env.MUX_SIGNING_KEY_ID || null;
+  const keyId = process.env.MUX_SIGNING_KEY_ID;
   let key = process.env.MUX_SIGNING_KEY_SECRET || "";
-  if (!kid || !key) return J({ error: "NO_ENV" }, 500);
+  if (!keyId || !key) return J({ error: "NO_ENV" }, 500);
 
-  key = normalizePem(key);
   try {
-    const token = jwt.sign({ aud: "v", sub: pid }, key, {
-      algorithm: "RS256",
-      expiresIn: "1h",
-      keyid: kid,
-    });
-    const decoded: any = jwt.decode(token, { complete: true });
+    key = normalizePem(key);
+    const hasPem =
+      key.includes("BEGIN PRIVATE KEY") || key.includes("BEGIN RSA PRIVATE KEY");
+    if (!hasPem) return J({ error: "BAD_KEY_FORMAT" }, 500);
+
+    // Same canonical payload (no `sub`)
+    const token = jwt.sign(
+      { aud: "v" },
+      key,
+      { algorithm: "RS256", expiresIn: "1h", keyid: keyId }
+    );
+
+    const decoded: any = jwt.decode(token, { complete: true }) || {};
     return J({
       playbackId: pid,
-      header: decoded?.header,
-      payload: decoded?.payload, // shows aud/sub/exp
-      test_url: `https://stream.mux.com/${pid}.m3u8?token=${token}`,
+      header: decoded.header,
+      payload: decoded.payload,
+      test_url: `https://stream.mux.com/${pid}.m3u8?token=${token}`
     });
   } catch (e: any) {
     return J({ error: "JWT_SIGN_FAILED", message: e?.message || String(e) }, 500);
