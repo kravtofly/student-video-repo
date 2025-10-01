@@ -14,6 +14,7 @@ const J = (d: unknown, s = 200) =>
 function looksBase64(s: string) {
   return s.length > 80 && !s.includes("\n") && /^[A-Za-z0-9+/=]+$/.test(s);
 }
+
 function normalizePem(raw: string) {
   let key = (raw || "").trim();
   if (looksBase64(key)) {
@@ -44,9 +45,9 @@ export async function POST(req: NextRequest) {
       key.includes("BEGIN PRIVATE KEY") || key.includes("BEGIN RSA PRIVATE KEY");
     if (!hasPem) return J({ error: "BAD_KEY_FORMAT" }, 500);
 
-    // Canonical Mux signing payload: only aud:"v" (+ exp). No `sub`.
+    // FIXED: Added sub: playbackId
     const token = jwt.sign(
-      { aud: "v" },
+      { aud: "v", sub: playbackId },
       key,
       { algorithm: "RS256", expiresIn: "12h", keyid: keyId }
     );
