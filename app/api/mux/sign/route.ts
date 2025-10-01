@@ -1,4 +1,3 @@
-// app/api/mux/sign/route.ts
 import type { NextRequest } from "next/server";
 import jwt from "jsonwebtoken";
 
@@ -9,30 +8,19 @@ const J = (d: unknown, s = 200) =>
   new Response(JSON.stringify(d), { status: s, headers: { "content-type": "application/json" } });
 
 function looksBase64(s: string) {
-  // long, no newlines, only base64 chars
   return s.length > 80 && !s.includes("\n") && /^[A-Za-z0-9+/=]+$/.test(s);
 }
-
 function normalizePem(raw: string) {
-  let key = raw.trim();
-
-  // If it looks like the Mux modal "Secret Key" (base64), decode to PEM text
+  let key = (raw || "").trim();
   if (looksBase64(key)) {
-    try {
-      key = Buffer.from(key, "base64").toString("utf8");
-    } catch {}
+    try { key = Buffer.from(key, "base64").toString("utf8"); } catch {}
   }
-
-  // Undo any accidental underscore headers from copy/paste
   key = key
     .replace(/BEGIN_PRIVATE_KEY/g, "BEGIN PRIVATE KEY")
     .replace(/END_PRIVATE_KEY/g, "END PRIVATE KEY")
     .replace(/BEGIN_RSA_PRIVATE_KEY/g, "BEGIN RSA PRIVATE KEY")
     .replace(/END_RSA_PRIVATE_KEY/g, "END RSA PRIVATE KEY");
-
-  // Convert escaped newlines to real newlines if present
   if (key.includes("\\n")) key = key.replace(/\\n/g, "\n");
-
   return key;
 }
 
@@ -46,13 +34,11 @@ export async function POST(req: NextRequest) {
     if (!keyId || !key) return J({ error: "NO_ENV" }, 500);
 
     key = normalizePem(key);
-
-    const hasPem =
-      key.includes("BEGIN PRIVATE KEY") || key.includes("BEGIN RSA PRIVATE KEY");
+    const hasPem = key.includes("BEGIN PRIVATE KEY") || key.includes("BEGIN RSA PRIVATE KEY");
     if (!hasPem) return J({ error: "BAD_KEY_FORMAT" }, 500);
 
-    // Sign the playback token (aud 'v' = video)
-    const token = jwt.sign({ aud: "v" }, key, {
+    // Lock token to THIS playback id (helps avoid ambiguous 403s)
+    const token = jwt.sign({ aud: "v", sub: playbackId }, key, {
       algorithm: "RS256",
       expiresIn: "12h",
       keyid: keyId,
@@ -60,7 +46,6 @@ export async function POST(req: NextRequest) {
 
     return J({ url: `https://stream.mux.com/${playbackId}.m3u8?token=${token}` });
   } catch (e: any) {
-    // This ends up in Vercel function logs for deeper detail
     console.error("mux/sign error:", e?.message || e);
     return J({ error: "JWT_SIGN_FAILED" }, 500);
   }
