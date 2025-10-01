@@ -48,7 +48,7 @@ export async function POST(req: NextRequest) {
     const token = jwt.sign(
       { aud: "v" },
       key,
-      { algorithm: "RS256", expiresIn: "12h" }
+      { algorithm: "RS256", expiresIn: "12h", keyid: keyId }
     );
 
     return J({ url: `https://stream.mux.com/${playbackId}.m3u8?token=${token}` });
