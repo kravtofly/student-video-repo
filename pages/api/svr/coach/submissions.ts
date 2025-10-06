@@ -13,37 +13,58 @@ export default withCORS(async function handler(req: NextApiRequest, res: NextApi
     res.status(400).json({ error: 'Provide coachId OR coachEmail OR coachRef' }); return;
   }
 
-  // Base select; join review_orders so we can filter by coach_email
-  let query = supabaseAdmin
-    .from('videos')
-    .select(`
-      id, owner_id, owner_email, owner_name, title,
-      mux_playback_id, playback_id, created_at, reviewed_at, review_summary, status, is_public,
-      review_order_id,
-      review_orders!inner(coach_email, coach_name, coach_id)
-    `) // !inner ensures we only get rows with a linked review_order
-    .order('created_at', { ascending: false });
-
+  // Case 1: direct by videos.coach_id
   if (coachId) {
-    // direct match on videos.coach_id
-    query = query.eq('coach_id', coachId);
-  } else if (coachEmail) {
-    // filter via joined review_orders
-    query = query.eq('review_orders.coach_email', coachEmail);
-  } else if (coachRef) {
-    // if you ever store coach_ref on videos
-    query = query.eq('coach_ref', coachRef);
+    const { data, error } = await supabaseAdmin
+      .from('videos')
+      .select('id, owner_id, owner_email, owner_name, title, mux_playback_id, playback_id, created_at, reviewed_at, review_summary, status, is_public')
+      .eq('coach_id', coachId)
+      .order('created_at', { ascending: false });
+
+    if (error) { res.status(500).json({ error: error.message }); return; }
+    res.status(200).json({ submissions: data ?? [] }); return;
   }
 
-  const { data, error } = await query;
-  if (error) { res.status(500).json({ error: error.message }); return; }
+  // Case 2: by coachEmail via review_orders
+  if (coachEmail) {
+    // get all order ids for this coachEmail
+    const { data: orders, error: oErr } = await supabaseAdmin
+      .from('review_orders')
+      .select('id')
+      .eq('coach_email', coachEmail);
 
-  // Optional: strip joined object from response
-  const submissions = (data || []).map((row: any) => {
-    const { review_orders, ...rest } = row;
-    return rest;
-  });
+    if (oErr) { res.status(500).json({ error: oErr.message }); return; }
+    const orderIds = (orders || []).map(o => o.id);
+    if (!orderIds.length) { res.status(200).json({ submissions: [] }); return; }
 
-  res.status(200).json({ submissions });
-  return;
+    const { data: vids, error: vErr } = await supabaseAdmin
+      .from('videos')
+      .select('id, owner_id, owner_email, owner_name, title, mux_playback_id, playback_id, created_at, reviewed_at, review_summary, status, is_public')
+      .in('review_order_id', orderIds)
+      .order('created_at', { ascending: false });
+
+    if (vErr) { res.status(500).json({ error: vErr.message }); return; }
+    res.status(200).json({ submissions: vids ?? [] }); return;
+  }
+
+  // Case 3: by coachRef (if you populate it in videos or can map it via review_orders.metadata)
+  if (coachRef) {
+    const { data: orders, error: oErr } = await supabaseAdmin
+      .from('review_orders')
+      .select('id')
+      .eq('coach_id', coachRef); // tweak if you store it under a different column
+    if (oErr) { res.status(500).json({ error: oErr.message }); return; }
+
+    const orderIds = (orders || []).map(o => o.id);
+    if (!orderIds.length) { res.status(200).json({ submissions: [] }); return; }
+
+    const { data: vids, error: vErr } = await supabaseAdmin
+      .from('videos')
+      .select('id, owner_id, owner_email, owner_name, title, mux_playback_id, playback_id, created_at, reviewed_at, review_summary, status, is_public')
+      .in('review_order_id', orderIds)
+      .order('created_at', { ascending: false });
+
+    if (vErr) { res.status(500).json({ error: vErr.message }); return; }
+    res.status(200).json({ submissions: vids ?? [] }); return;
+  }
 });
