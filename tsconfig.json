@@ -7,7 +7,10 @@
     "module": "esnext",
     "moduleResolution": "bundler",
     "baseUrl": ".",
-    "paths": { "@/*": ["./*"] },
+    "paths": {
+      "@/*": ["./*"],
+      "@lib/*": ["lib/*"]
+    },
     "jsx": "preserve",
     "resolveJsonModule": true,
     "isolatedModules": true,
