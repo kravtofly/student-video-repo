@@ -2,6 +2,15 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import Head from 'next/head';
 
+// Allow the Mux web component attributes in TSX
+declare global {
+  namespace JSX {
+    interface IntrinsicElements {
+      'mux-player': any;
+    }
+  }
+}
+
 type Video = {
   id: string;
   mux_playback_id?: string | null;
