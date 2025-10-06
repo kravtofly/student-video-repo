@@ -1,8 +1,7 @@
 import type { NextApiRequest, NextApiResponse } from 'next'
-import { supabaseServer } from '../../../../lib/supabase'
-import { withCORS } from '../../../../lib/cors'
-import { signMuxPlaybackToken } from '../../../../lib/mux/signPlaybackToken'
-
+import { supabaseAdmin } from '../../../../../lib/supabase';
+import { withCORS } from '../../../../../lib/cors';
+import { signMuxPlaybackToken } from '../../../../../lib/mux/signPlaybackToken';
 
 export default withCORS(async function handler(req: NextApiRequest, res: NextApiResponse) {
 if (req.method !== 'GET') return res.status(405).end()
