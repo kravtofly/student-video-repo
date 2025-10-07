@@ -95,6 +95,8 @@ export default withCORS(async function handler(req: NextApiRequest, res: NextApi
     }
   };
 
+console.log('[mark-reviewed] will send to Make', JSON.stringify(payload));
+  
   // 7) Call Make webhook
   if (!process.env.MAKE_REVIEWED_WEBHOOK_URL) {
     res.status(500).json({ error: 'MAKE_REVIEWED_WEBHOOK_URL not configured' }); return;
@@ -116,6 +118,8 @@ export default withCORS(async function handler(req: NextApiRequest, res: NextApi
     return;
   }
 
+console.log('[mark-reviewed] Make status', resp.status);
+  
   // 8) Mark emailed + notified AFTER successful Make send
   const { error: finalErr, data: finalVid } = await supabaseAdmin
     .from('videos')
