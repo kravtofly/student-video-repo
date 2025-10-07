@@ -1,12 +1,6 @@
 // app/api/sign-playback/route.ts
 import { NextRequest, NextResponse } from 'next/server';
-import { SignJWT, importPKCS8 } from 'jose';
-
-/**
- * ENV required in Vercel:
- * - MUX_SIGNING_KEY_ID          (from Mux > Settings > Signing Keys)
- * - MUX_SIGNING_PRIVATE_KEY     (full PEM, including -----BEGIN PRIVATE KEY----- ... END ...)
- */
+import { SignJWT, importPKCS8, importPKCS1 } from 'jose';
 
 function cors(json: any, status = 200) {
   return new NextResponse(JSON.stringify(json), {
@@ -20,47 +14,51 @@ function cors(json: any, status = 200) {
     },
   });
 }
+export function OPTIONS() { return cors({ ok: true }); }
 
-export async function OPTIONS() {
-  return cors({ ok: true }, 200);
-}
+// Normalize PEM: support pasted with \n and both PKCS8 / PKCS1 (RSA) formats
+async function loadPrivateKey() {
+  const raw = process.env.MUX_SIGNING_PRIVATE_KEY || '';
+  if (!raw) throw new Error('MUX_SIGNING_PRIVATE_KEY not set');
 
-async function getPemKey() {
-  const pem = process.env.MUX_SIGNING_PRIVATE_KEY || '';
-  if (!pem) throw new Error('MUX_SIGNING_PRIVATE_KEY not set');
-  // jose expects PKCS8 PEM
-  return importPKCS8(pem, 'RS256');
+  // Convert escaped newlines to real newlines if needed
+  const pem = raw.includes('\\n') ? raw.replace(/\\n/g, '\n') : raw;
+
+  if (pem.includes('BEGIN PRIVATE KEY')) {
+    return importPKCS8(pem, 'RS256'); // PKCS8
+  }
+  if (pem.includes('BEGIN RSA PRIVATE KEY')) {
+    return importPKCS1(pem, 'RS256'); // PKCS1 / “RSA PRIVATE KEY”
+  }
+  throw new Error('Unrecognized private key format. Expected BEGIN PRIVATE KEY or BEGIN RSA PRIVATE KEY.');
 }
 
 async function signForPlayback(playbackId: string) {
   const kid = process.env.MUX_SIGNING_KEY_ID;
   if (!kid) throw new Error('MUX_SIGNING_KEY_ID not set');
-  const key = await getPemKey();
 
-  // Mux signed playback tokens: RS256, header.kid, payload { aud: 'v', sub: playbackId }
-  const token = await new SignJWT({ aud: 'v', sub: playbackId })
+  const key = await loadPrivateKey();
+
+  // Mux signed playback tokens: payload { aud: 'v', sub: playbackId }, RS256, header.kid
+  return new SignJWT({ aud: 'v', sub: playbackId })
     .setProtectedHeader({ alg: 'RS256', kid })
     .setIssuedAt()
     .setExpirationTime('1h')
     .sign(key);
-
-  return token;
 }
 
-function extractPlaybackId(req: NextRequest, body: any) {
+function getPlaybackId(req: NextRequest, body: any) {
   const sp = req.nextUrl.searchParams;
   return (
-    (sp.get('id') ||
-      sp.get('playbackId') ||
-      sp.get('pid') ||
-      (body && (body.id || body.playbackId || body.pid)) ||
-      '') as string
+    (sp.get('id') || sp.get('playbackId') || sp.get('pid') ||
+      (body && (body.id || body.playbackId || body.pid)) || ''
+    ) as string
   ).trim();
 }
 
 export async function GET(req: NextRequest) {
   try {
-    const playbackId = extractPlaybackId(req, null);
+    const playbackId = getPlaybackId(req, null);
     if (!playbackId) return cors({ error: 'playbackId required (id|playbackId|pid)' }, 400);
     const token = await signForPlayback(playbackId);
     return cors({ token });
@@ -72,7 +70,7 @@ export async function GET(req: NextRequest) {
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json().catch(() => ({}));
-    const playbackId = extractPlaybackId(req, body);
+    const playbackId = getPlaybackId(req, body);
     if (!playbackId) return cors({ error: 'playbackId required (id|playbackId|pid)' }, 400);
     const token = await signForPlayback(playbackId);
     return cors({ token });
