@@ -1,27 +1,22 @@
-// pages/api/student/review/[id].ts
+// pages/api/student/review/[vid].ts
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { supabaseAdmin } from '@lib/supabase';
+import { withCORS } from '@lib/cors';
 
-// (Optional) narrow CORS to your domain
-function setCORS(res: NextApiResponse) {
-  res.setHeader('Access-Control-Allow-Credentials', 'true');
-  res.setHeader('Access-Control-Allow-Origin', 'https://www.kravtofly.com');
-  res.setHeader('Access-Control-Allow-Methods', 'GET,OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
-}
+export default withCORS(async function handler(req: NextApiRequest, res: NextApiResponse) {
+  if (req.method !== 'GET') { res.status(405).end(); return; }
 
-export default async function handler(req: NextApiRequest, res: NextApiResponse) {
-  setCORS(res);
-  if (req.method === 'OPTIONS') return res.status(200).end();
-  if (req.method !== 'GET') return res.status(405).end();
+  // Accept either ?vid or ?id based on filename/usage
+  const videoId =
+    (req.query.vid as string) ||
+    (req.query.id as string) ||
+    '';
 
-  const videoId = req.query.id as string;
-  if (!videoId) return res.status(400).json({ error: 'Missing id' });
+  if (!videoId) { res.status(400).json({ error: 'Missing video id' }); return; }
 
-  // (Light auth) require a magic-link token header to avoid anonymous scraping.
-  const auth = req.headers.authorization || '';
-  if (!auth.startsWith('Bearer ')) return res.status(401).json({ error: 'Unauthorized' });
-  // NOTE: if you verify the token elsewhere, keep that logic. This endpoint only checks presence.
+  // (Optional) If you want to require a magic-link token header, uncomment:
+  // const auth = req.headers.authorization || '';
+  // if (!auth.startsWith('Bearer ')) { res.status(401).json({ error: 'Unauthorized' }); return; }
 
   // 1) Load video metadata
   const { data: vid, error: vErr } = await supabaseAdmin
@@ -30,24 +25,25 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     .eq('id', videoId)
     .maybeSingle();
 
-  if (vErr) return res.status(500).json({ error: vErr.message });
-  if (!vid) return res.status(404).json({ error: 'Not found' });
+  if (vErr) { res.status(500).json({ error: vErr.message }); return; }
+  if (!vid) { res.status(404).json({ error: 'Not found' }); return; }
 
-  // 2) Load notes from your actual columns t_seconds/body and normalize
-  const { data: rawNotes, error: notesErr } = await supabaseAdmin
+  // 2) Load notes using your actual columns: t_seconds (numeric) and body (text)
+  const { data: rawNotes, error: nErr } = await supabaseAdmin
     .from('review_comments')
     .select('t_seconds, body')
     .eq('video_id', videoId)
     .order('t_seconds', { ascending: true });
 
-  if (notesErr) return res.status(500).json({ error: notesErr.message });
+  if (nErr) { res.status(500).json({ error: nErr.message }); return; }
 
+  // 3) Normalize to { t, text } for the Webflow embed
   const notes = (rawNotes || []).map((n: any) => ({
     t: Number(n.t_seconds ?? 0),
     text: String(n.body ?? '').trim(),
   }));
 
-  // 3) Respond
+  // 4) Respond
   res.status(200).json({
     video: {
       id: vid.id,
@@ -57,4 +53,4 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     },
     notes,
   });
-}
+});
