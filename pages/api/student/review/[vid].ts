@@ -1,62 +1,60 @@
-// pages/api/student/review/[vid].ts
+// pages/api/student/review/[id].ts
 import type { NextApiRequest, NextApiResponse } from 'next';
-import { withCORS } from '@lib/cors';
 import { supabaseAdmin } from '@lib/supabase';
-import { jwtVerify } from 'jose';
 
-const SECRET = new TextEncoder().encode(process.env.SVR_JWT_SECRET || '');
-
-async function requireEmail(req: NextApiRequest): Promise<string> {
-  const auth = req.headers.authorization || '';
-  const token = auth.startsWith('Bearer ') ? auth.slice(7) : '';
-  if (!token) throw new Error('no token');
-  const { payload } = await jwtVerify(token, SECRET, {
-    issuer: 'student-video-repo',
-    audience: 'svr-student'
-  });
-  const email = String(payload.sub || '').toLowerCase();
-  if (!email) throw new Error('no sub');
-  return email;
+// (Optional) narrow CORS to your domain
+function setCORS(res: NextApiResponse) {
+  res.setHeader('Access-Control-Allow-Credentials', 'true');
+  res.setHeader('Access-Control-Allow-Origin', 'https://www.kravtofly.com');
+  res.setHeader('Access-Control-Allow-Methods', 'GET,OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
 }
 
-export default withCORS(async (req: NextApiRequest, res: NextApiResponse) => {
+export default async function handler(req: NextApiRequest, res: NextApiResponse) {
+  setCORS(res);
+  if (req.method === 'OPTIONS') return res.status(200).end();
   if (req.method !== 'GET') return res.status(405).end();
 
-  try {
-    const email = await requireEmail(req);
-    const vid = String(req.query.vid || '');
+  const videoId = req.query.id as string;
+  if (!videoId) return res.status(400).json({ error: 'Missing id' });
 
-    if (!vid) return res.status(400).json({ error: 'Missing vid' });
+  // (Light auth) require a magic-link token header to avoid anonymous scraping.
+  const auth = req.headers.authorization || '';
+  if (!auth.startsWith('Bearer ')) return res.status(401).json({ error: 'Unauthorized' });
+  // NOTE: if you verify the token elsewhere, keep that logic. This endpoint only checks presence.
 
-    // Get the video and ensure ownership + reviewed
-    const { data: v, error: e0 } = await supabaseAdmin
-      .from('videos')
-      .select('id, title, mux_playback_id, playback_id, review_summary, reviewed_at, owner_email')
-      .eq('id', vid)
-      .single();
+  // 1) Load video metadata
+  const { data: vid, error: vErr } = await supabaseAdmin
+    .from('videos')
+    .select('id, title, mux_playback_id, playback_id, review_summary')
+    .eq('id', videoId)
+    .maybeSingle();
 
-    if (e0 || !v) return res.status(404).json({ error: 'Not found' });
-    if (!v.reviewed_at) return res.status(403).json({ error: 'Not reviewed yet' });
-    if ((v.owner_email || '').toLowerCase() !== email) return res.status(403).json({ error: 'Forbidden' });
+  if (vErr) return res.status(500).json({ error: vErr.message });
+  if (!vid) return res.status(404).json({ error: 'Not found' });
 
-    // Notes
-    const { data: notes } = await supabaseAdmin
-      .from('review_comments')
-      .select('t, text')
-      .eq('video_id', v.id)
-      .order('t', { ascending: true });
+  // 2) Load notes from your actual columns t_seconds/body and normalize
+  const { data: rawNotes, error: notesErr } = await supabaseAdmin
+    .from('review_comments')
+    .select('t_seconds, body')
+    .eq('video_id', videoId)
+    .order('t_seconds', { ascending: true });
 
-    res.json({
-      video: {
-        id: v.id,
-        title: v.title || 'Session video',
-        playbackId: v.mux_playback_id ?? v.playback_id ?? null,
-        reviewedAt: v.reviewed_at,
-        summary: v.review_summary ?? ''
-      },
-      notes: notes || []
-    });
-  } catch {
-    res.status(401).json({ error: 'Unauthorized' });
-  }
-});
+  if (notesErr) return res.status(500).json({ error: notesErr.message });
+
+  const notes = (rawNotes || []).map((n: any) => ({
+    t: Number(n.t_seconds ?? 0),
+    text: String(n.body ?? '').trim(),
+  }));
+
+  // 3) Respond
+  res.status(200).json({
+    video: {
+      id: vid.id,
+      title: vid.title,
+      playbackId: vid.mux_playback_id ?? vid.playback_id ?? null,
+      summary: vid.review_summary ?? null,
+    },
+    notes,
+  });
+}
