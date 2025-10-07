@@ -1,6 +1,14 @@
 // app/api/sign-playback/route.ts
 import { NextRequest, NextResponse } from 'next/server';
-import { SignJWT, importPKCS8 } from 'jose';
+import { SignJWT } from 'jose';
+import { createPrivateKey, KeyObject } from 'crypto';
+
+/**
+ * Env:
+ * - MUX_SIGNING_KEY_ID
+ * - MUX_SIGNING_PRIVATE_KEY   (optional; PKCS8)
+ * - MUX_SIGNING_KEY_SECRET    (optional; PKCS1/RSA or PKCS8)
+ */
 
 function allowOrigin(req: NextRequest) {
   const o = req.headers.get('origin') || '';
@@ -21,31 +29,36 @@ function cors(req: NextRequest, json: any, status = 200) {
 }
 export function OPTIONS(req: NextRequest) { return cors(req, { ok: true }); }
 
-async function loadPrivateKeyPKCS8() {
-  // Support either env name
-  let pem = process.env.MUX_SIGNING_PRIVATE_KEY || process.env.MUX_SIGNING_KEY_SECRET || '';
-  if (!pem) throw new Error('MUX_SIGNING_PRIVATE_KEY (or MUX_SIGNING_KEY_SECRET) not set');
+function readPemFromEnv(): string {
+  let pem =
+    process.env.MUX_SIGNING_PRIVATE_KEY ||
+    process.env.MUX_SIGNING_KEY_SECRET ||
+    '';
+  if (!pem) throw new Error('MUX_SIGNING_PRIVATE_KEY or MUX_SIGNING_KEY_SECRET not set');
 
+  // Convert escaped \n to real newlines if necessary
   if (pem.includes('\\n')) pem = pem.replace(/\\n/g, '\n');
-  if (!pem.includes('BEGIN PRIVATE KEY'))
-    throw new Error(
-      'Private key must be PKCS8 (-----BEGIN PRIVATE KEY-----). ' +
-      'In Mux → Settings → Signing Keys, create a new key and paste that here.'
-    );
+  return pem.trim();
+}
 
-  return importPKCS8(pem, 'RS256');
+function loadAnyPemKey(): KeyObject {
+  const pem = readPemFromEnv();
+  // Let Node parse PKCS1 (RSA) or PKCS8 transparently.
+  // If the PEM is malformed (e.g., header edited), createPrivateKey will throw.
+  return createPrivateKey({ key: pem, format: 'pem' });
 }
 
 async function signForPlayback(playbackId: string) {
   const kid = process.env.MUX_SIGNING_KEY_ID;
   if (!kid) throw new Error('MUX_SIGNING_KEY_ID not set');
-  const key = await loadPrivateKeyPKCS8();
+
+  const keyObj = loadAnyPemKey(); // KeyObject usable directly by jose
 
   return new SignJWT({ aud: 'v', sub: playbackId })
     .setProtectedHeader({ alg: 'RS256', kid })
     .setIssuedAt()
     .setExpirationTime('1h')
-    .sign(key);
+    .sign(keyObj as any);
 }
 
 function getPlaybackId(req: NextRequest, body: any) {
@@ -67,6 +80,7 @@ export async function GET(req: NextRequest) {
     return cors(req, { error: 'SIGN_FAILED', message: String(err?.message || err) }, 500);
   }
 }
+
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json().catch(() => ({}));
