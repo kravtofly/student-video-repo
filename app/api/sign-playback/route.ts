@@ -1,70 +1,82 @@
 // app/api/sign-playback/route.ts
-export const runtime = "nodejs";
-export const dynamic = "force-dynamic";
+import { NextRequest, NextResponse } from 'next/server';
+import { SignJWT, importPKCS8 } from 'jose';
 
-// app/api/sign-playback/route.ts
-import { NextResponse } from "next/server";
-import jwt from "jsonwebtoken";
+/**
+ * ENV required in Vercel:
+ * - MUX_SIGNING_KEY_ID          (from Mux > Settings > Signing Keys)
+ * - MUX_SIGNING_PRIVATE_KEY     (full PEM, including -----BEGIN PRIVATE KEY----- ... END ...)
+ */
 
-const { MUX_SIGNING_KEY_ID, MUX_SIGNING_KEY_SECRET } = process.env as Record<
-  string,
-  string | undefined
->;
-
-// Accept either a PEM or a base64-encoded PEM from env
-function coercePem(secret?: string): string | null {
-  if (!secret) return null;
-  const s = secret.trim();
-  if (s.includes("-----BEGIN")) return s; // already PEM (PKCS#8 or PKCS#1)
-  try {
-    const decoded = Buffer.from(s, "base64").toString("utf8").trim();
-    if (decoded.includes("-----BEGIN")) return decoded;
-  } catch {
-    // ignore
-  }
-  return null;
+function cors(json: any, status = 200) {
+  return new NextResponse(JSON.stringify(json), {
+    status,
+    headers: {
+      'content-type': 'application/json',
+      'access-control-allow-origin': 'https://www.kravtofly.com',
+      'access-control-allow-methods': 'GET,POST,OPTIONS',
+      'access-control-allow-headers': 'Content-Type, Authorization',
+      'access-control-allow-credentials': 'true',
+    },
+  });
 }
 
-export async function GET(req: Request) {
+export async function OPTIONS() {
+  return cors({ ok: true }, 200);
+}
+
+async function getPemKey() {
+  const pem = process.env.MUX_SIGNING_PRIVATE_KEY || '';
+  if (!pem) throw new Error('MUX_SIGNING_PRIVATE_KEY not set');
+  // jose expects PKCS8 PEM
+  return importPKCS8(pem, 'RS256');
+}
+
+async function signForPlayback(playbackId: string) {
+  const kid = process.env.MUX_SIGNING_KEY_ID;
+  if (!kid) throw new Error('MUX_SIGNING_KEY_ID not set');
+  const key = await getPemKey();
+
+  // Mux signed playback tokens: RS256, header.kid, payload { aud: 'v', sub: playbackId }
+  const token = await new SignJWT({ aud: 'v', sub: playbackId })
+    .setProtectedHeader({ alg: 'RS256', kid })
+    .setIssuedAt()
+    .setExpirationTime('1h')
+    .sign(key);
+
+  return token;
+}
+
+function extractPlaybackId(req: NextRequest, body: any) {
+  const sp = req.nextUrl.searchParams;
+  return (
+    (sp.get('id') ||
+      sp.get('playbackId') ||
+      sp.get('pid') ||
+      (body && (body.id || body.playbackId || body.pid)) ||
+      '') as string
+  ).trim();
+}
+
+export async function GET(req: NextRequest) {
   try {
-    const { searchParams } = new URL(req.url);
-    const playbackId = searchParams.get("playback_id")?.trim();
+    const playbackId = extractPlaybackId(req, null);
+    if (!playbackId) return cors({ error: 'playbackId required (id|playbackId|pid)' }, 400);
+    const token = await signForPlayback(playbackId);
+    return cors({ token });
+  } catch (err: any) {
+    return cors({ error: 'SIGN_FAILED', message: String(err?.message || err) }, 500);
+  }
+}
 
-    if (!playbackId) {
-      return NextResponse.json({ error: "Missing playback_id" }, { status: 400 });
-    }
-    if (!MUX_SIGNING_KEY_ID) {
-      return NextResponse.json({ error: "Missing MUX_SIGNING_KEY_ID" }, { status: 500 });
-    }
-
-    const pem = coercePem(MUX_SIGNING_KEY_SECRET);
-    if (!pem) {
-      return NextResponse.json(
-        { error: "MUX_SIGNING_KEY_SECRET must be a PEM or base64-encoded PEM" },
-        { status: 500 }
-      );
-    }
-
-    // RS256 JWT for Mux signed playback:
-    // - header.kid = Signing Key ID
-    // - sub = playback_id
-    // - aud = "v"
-    // - exp = 60s (adjust as needed)
-    const token = jwt.sign(
-      {},                    // no custom claims needed
-      pem,                   // RSA private key (PKCS#1 or PKCS#8)
-      {
-        algorithm: "RS256",
-        keyid: MUX_SIGNING_KEY_ID,
-        subject: playbackId,
-        audience: "v",
-        expiresIn: 60,       // seconds
-      }
-    );
-
-    return NextResponse.json({ token }, { status: 200 });
-  } catch (e: any) {
-    console.error("sign-playback error:", e);
-    return NextResponse.json({ error: e?.message ?? "Failed to sign playback token" }, { status: 500 });
+export async function POST(req: NextRequest) {
+  try {
+    const body = await req.json().catch(() => ({}));
+    const playbackId = extractPlaybackId(req, body);
+    if (!playbackId) return cors({ error: 'playbackId required (id|playbackId|pid)' }, 400);
+    const token = await signForPlayback(playbackId);
+    return cors({ token });
+  } catch (err: any) {
+    return cors({ error: 'SIGN_FAILED', message: String(err?.message || err) }, 500);
   }
 }
