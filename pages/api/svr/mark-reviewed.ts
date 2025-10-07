@@ -16,7 +16,7 @@ export default withCORS(async function handler(req: NextApiRequest, res: NextApi
     .select(`
       id, title, mux_playback_id, playback_id, owner_id, owner_email, coach_id,
       review_order_id, reviewed_at, emailed_ready, student_notified_at,
-      review_orders!inner (
+      review_orders (
         id, coach_id, coach_email, status
       ),
       profiles!videos_owner_id_fkey ( id, full_name, email ),
