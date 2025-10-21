@@ -2,21 +2,21 @@
 
 import React from "react";
 
-/** ---------- Types that match your current API ---------- */
+/** ---------- Types ---------- */
 type ViewerRole = "coach" | "student";
 
 type Submission = {
   id: string;
   title?: string | null;
-  mux_playback_id?: string | null; // primary
-  playback_id?: string | null;     // legacy alias
+  mux_playback_id?: string | null;
+  playback_id?: string | null;
   owner_name?: string | null;
   review?: { summary?: string | null } | null;
 };
 
 type Note = {
   id: string;
-  t_seconds: number; // server returns canonical seconds here
+  t_seconds: number;
   body: string;
   created_at: string;
 };
@@ -24,7 +24,18 @@ type Note = {
 // TS-friendly alias for the mux-player web component
 const MuxPlayer = "mux-player" as any;
 
-/** ---------- Helper: note payload that satisfies old & new handlers ---------- */
+/** ---------- Helper: extract coachEmail ---------- */
+function getCoachEmailFromUrl(): string | undefined {
+  if (typeof window === "undefined") return undefined;
+  const qs = new URLSearchParams(window.location.search);
+  const v =
+    qs.get("coachEmail") ||
+    qs.get("coach_email") ||
+    qs.get("email");
+  return v || undefined;
+}
+
+/** ---------- Helper: build note payload for both old + new APIs ---------- */
 function buildNotePayload(args: {
   submissionId: string;
   coachEmail?: string | null;
@@ -34,26 +45,23 @@ function buildNotePayload(args: {
 }) {
   const { submissionId, coachEmail, t, body, token } = args;
   return {
-    // current shape
+    // current shape (what your Make/DB pipeline expects)
     videoId: submissionId,
     coachEmail: coachEmail || undefined,
-    t,          // seconds
-    body,       // note text
+    t, // seconds
+    body, // note text
 
-    // legacy aliases (some older endpoints looked for these)
+    // legacy aliases (old route compatibility)
     at: t,
     text: body,
 
-    // pass-through if your API validates token in body
+    // pass-through for secure tokens
     token: token || undefined,
   };
 }
 
 /** =========================================================
  * ReviewClient
- * - Pulls submission + playbackToken from /api/svr/submission/:id
- * - Loads/saves notes against /api/svr/notes
- * - Mirrors the old layout (player left, notes+summary right)
  * ========================================================= */
 export default function ReviewClient({
   submissionId,
@@ -75,21 +83,17 @@ export default function ReviewClient({
   const [notes, setNotes] = React.useState<Note[]>([]);
   const [summary, setSummary] = React.useState<string>("");
 
-  // Inline "add note" UI
+  // Inline note state
   const [noteText, setNoteText] = React.useState("");
   const [savingNote, setSavingNote] = React.useState(false);
 
-  // Read coachEmail from the querystring (Webflow dashboard links provide it)
-  const coachEmail = React.useMemo(() => {
-    if (typeof window === "undefined") return "";
-    const qs = new URLSearchParams(window.location.search);
-    return qs.get("coachEmail") || "";
-  }, []);
+  // Derive coach email once on mount
+  const coachEmail = React.useMemo(() => getCoachEmailFromUrl() || "", []);
 
-  // Keep ?token=... on all requests (your API uses this on GETs)
+  // Keep ?token=... on all requests
   const qsSuffix = token ? `?token=${encodeURIComponent(token)}` : "";
 
-  /** Load mux-player script once */
+  /** Inject mux-player once */
   React.useEffect(() => {
     if (document.querySelector('script[data-mux-player]')) return;
     const s = document.createElement("script");
@@ -99,12 +103,12 @@ export default function ReviewClient({
     document.head.appendChild(s);
   }, []);
 
-  /** Resolve playbackId from either field name */
+  /** Resolve playback ID safely */
   function getPlaybackId(sub: Submission | null | undefined) {
     return (sub?.mux_playback_id || sub?.playback_id || "") as string;
   }
 
-  /** Fetch submission + playbackToken (your legacy route returns both) */
+  /** Load submission + playbackToken */
   async function loadSubmissionAndToken() {
     const res = await fetch(
       `/api/svr/submission/${encodeURIComponent(submissionId)}${qsSuffix}`,
@@ -117,10 +121,10 @@ export default function ReviewClient({
     const sub: Submission = json.submission ?? json;
     setSubmission(sub);
     setSummary(sub?.review?.summary ?? "");
-    setPlaybackToken(json.playbackToken ?? null); // ← important for signed playback
+    setPlaybackToken(json.playbackToken ?? null);
   }
 
-  /** Fetch notes */
+  /** Load notes */
   async function loadNotes() {
     const res = await fetch(
       `/api/svr/notes?videoId=${encodeURIComponent(submissionId)}${qsSuffix}`,
@@ -147,7 +151,7 @@ export default function ReviewClient({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [submissionId, token]);
 
-  /** Add note at current time (coach) */
+  /** Add note (fixed payload for legacy API) */
   async function addNoteAtCurrentTime() {
     if (!submissionId) return;
 
@@ -158,6 +162,7 @@ export default function ReviewClient({
 
     try {
       setSavingNote(true);
+
       const payload = buildNotePayload({
         submissionId,
         coachEmail,
@@ -171,16 +176,21 @@ export default function ReviewClient({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
       });
+
       const j = await r.json();
       if (!r.ok || j?.error) throw new Error(j?.error || "Failed to save note");
+
       setNoteText("");
       await loadNotes();
+    } catch (e) {
+      console.error(e);
+      alert("Failed to save note. Check console for details.");
     } finally {
       setSavingNote(false);
     }
   }
 
-  /** Mark reviewed (coach) */
+  /** Mark reviewed (no change) */
   async function markReviewedAndNotify() {
     if (!submissionId) return;
     const r = await fetch(`/api/svr/mark-reviewed${qsSuffix}`, {
@@ -199,30 +209,25 @@ export default function ReviewClient({
   }
 
   /** Render states */
-  if (loading) {
+  if (loading)
     return <main className="max-w-5xl mx-auto p-6 text-gray-600">Loading…</main>;
-  }
-  if (error) {
+  if (error)
     return (
       <main className="max-w-5xl mx-auto p-6 rounded-xl bg-rose-50 text-rose-700 border border-rose-200">
         {error}
       </main>
     );
-  }
-  if (!submission) {
+  if (!submission)
     return <main className="max-w-5xl mx-auto p-6">Submission not found.</main>;
-  }
 
   const playbackId = getPlaybackId(submission);
 
   return (
     <main className="mx-auto max-w-[1100px] p-4 md:p-6 font-[system-ui,-apple-system,Segoe UI,Roboto,Arial]">
-      {/* Header (compact, like your original) */}
       <h1 className="text-xl font-semibold mb-4">Coach Review</h1>
 
-      {/* Two-column grid: video left, notes+summary right */}
       <div className="grid gap-5 items-start md:grid-cols-[1.2fr_.8fr]">
-        {/* Player Card */}
+        {/* Player card */}
         <div className="rounded-2xl overflow-hidden border border-gray-200 bg-white">
           <div className="bg-black">
             {playbackId && playbackToken ? (
@@ -262,7 +267,7 @@ export default function ReviewClient({
           )}
         </div>
 
-        {/* Right column: Notes + Summary */}
+        {/* Notes + Summary */}
         <div className="space-y-5">
           <section className="rounded-2xl border border-gray-200 p-4 bg-white">
             <h3 className="font-semibold mb-2">Timestamped Notes</h3>
