@@ -2,8 +2,6 @@
 
 import React from "react";
 
-const MuxPlayer = 'mux-player' as any; // TS: treat the web component as any
-
 type ViewerRole = "coach" | "student";
 
 interface Submission {
@@ -12,9 +10,9 @@ interface Submission {
   owner_email?: string;
   owner_name?: string;
   mux_asset_id?: string;
-  mux_playback_id?: string;   // common
-  playback_id?: string;       // alt naming
-  muxPlaybackId?: string;     // alt naming
+  mux_playback_id?: string; // common
+  playback_id?: string;     // alt naming
+  muxPlaybackId?: string;   // alt naming
   status?: string;
   review?: { summary?: string } | null;
 }
@@ -25,6 +23,9 @@ interface Note {
   text: string;
   created_at?: string;
 }
+
+// TS-friendly alias for the mux-player web component
+const MuxPlayer = "mux-player" as any;
 
 export default function ReviewClient({
   submissionId,
@@ -41,15 +42,17 @@ export default function ReviewClient({
   const [submission, setSubmission] = React.useState<Submission | null>(null);
   const [notes, setNotes] = React.useState<Note[]>([]);
   const [summary, setSummary] = React.useState<string>("");
-  const [videoSrc, setVideoSrc] = React.useState<string>("");
-  const [playbackId, setPlaybackId] = React.useState<string>("");
   const [error, setError] = React.useState<string | null>(null);
+
+  // Playback state
+  const [playbackId, setPlaybackId] = React.useState<string>("");
+  const [playbackToken, setPlaybackToken] = React.useState<string>("");
+  const [videoSrc, setVideoSrc] = React.useState<string>("");
 
   const qs = token ? `?token=${encodeURIComponent(token)}` : "";
 
-  // Load mux-player web component (works great with HLS on Chrome)
+  // load mux-player script once
   React.useEffect(() => {
-    // don’t re-add if already present
     if (document.querySelector('script[data-mux-player]')) return;
     const s = document.createElement("script");
     s.src = "https://cdn.jsdelivr.net/npm/@mux/mux-player";
@@ -58,13 +61,13 @@ export default function ReviewClient({
     document.head.appendChild(s);
   }, []);
 
-  function getPlaybackFrom(sub: Submission | null | undefined) {
+  function extractPlaybackId(sub: Submission | null | undefined) {
     return (
       sub?.mux_playback_id ||
       (sub as any)?.playback_id ||
       (sub as any)?.muxPlaybackId ||
       ""
-    );
+    ) as string;
   }
 
   async function load() {
@@ -72,19 +75,20 @@ export default function ReviewClient({
       setLoading(true);
       setError(null);
 
-      // 1) Submission (server returns full record)
+      // 1) Submission
       const subRes = await fetch(
         `/api/svr/submission/${encodeURIComponent(submissionId)}${qs}`,
         { cache: "no-store" }
       );
-      if (!subRes.ok) throw new Error(`Failed to load submission (${subRes.status})`);
+      if (!subRes.ok)
+        throw new Error(`Failed to load submission (${subRes.status})`);
       const subJson = await subRes.json();
       const sub: Submission = subJson?.submission ?? subJson;
       setSubmission(sub);
       setSummary(sub?.review?.summary ?? "");
 
-      // Resolve playback id from submission
-      const pb = getPlaybackFrom(sub);
+      // Get playback id from submission
+      const pb = extractPlaybackId(sub);
       setPlaybackId(pb);
 
       // 2) Notes (expects query key: videoId)
@@ -92,30 +96,41 @@ export default function ReviewClient({
         `/api/svr/notes?videoId=${encodeURIComponent(submissionId)}${qs}`,
         { cache: "no-store" }
       );
-      if (!notesRes.ok) throw new Error(`Failed to load notes (${notesRes.status})`);
+      if (!notesRes.ok)
+        throw new Error(`Failed to load notes (${notesRes.status})`);
       const notesJson = await notesRes.json();
       setNotes(notesJson?.notes ?? notesJson ?? []);
 
-      // 3) Mux playback (sign for *playback id*, not submission id)
-      if (!pb) {
-        throw new Error("This submission has no Mux playbackId.");
-      }
+      // 3) Playback (signed token or signed URL)
+      if (!pb) throw new Error("This submission has no Mux playbackId.");
+
       const muxRes = await fetch(
         `/api/mux/playback/${encodeURIComponent(pb)}${qs}`,
         { cache: "no-store" }
       );
-      if (!muxRes.ok) throw new Error(`Failed to load playback token (${muxRes.status})`);
+      if (!muxRes.ok)
+        throw new Error(`Failed to load playback token (${muxRes.status})`);
       const muxJson: any = await muxRes.json();
 
-      // Accept various shapes from your API
-      const src: string =
-        muxJson?.signedUrl ||
-        muxJson?.hls ||
-        muxJson?.url ||
-        muxJson?.src ||
-        ""; // final fallback below if empty
+      const tokenFromApi =
+        muxJson?.playbackToken ||
+        muxJson?.token ||
+        muxJson?.signature ||
+        muxJson?.jwt ||
+        "";
 
-      setVideoSrc(src || `https://stream.mux.com/${pb}.m3u8`);
+      if (tokenFromApi) {
+        setPlaybackToken(String(tokenFromApi));
+        setVideoSrc(""); // player will use playback-id + playback-token
+      } else {
+        const srcFromApi =
+          muxJson?.signedUrl ||
+          muxJson?.hls ||
+          muxJson?.url ||
+          muxJson?.src ||
+          `https://stream.mux.com/${pb}.m3u8`; // public assets fallback
+        setVideoSrc(String(srcFromApi));
+      }
     } catch (e: any) {
       setError(e?.message ?? "Something went wrong.");
     } finally {
@@ -128,7 +143,7 @@ export default function ReviewClient({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [submissionId, token]);
 
-  // -------- Coach actions --------
+  // ---------- Coach actions ----------
   async function addNote(atSeconds: number, text: string) {
     const body = { videoId: submissionId, at: atSeconds, text, token };
     const r = await fetch("/api/svr/notes", {
@@ -153,13 +168,9 @@ export default function ReviewClient({
     alert("Student notified.");
   }
 
-  // -------- Render --------
+  // ---------- Render ----------
   if (loading) {
-    return (
-      <div className="max-w-6xl mx-auto p-6 text-gray-600">
-        Loading…
-      </div>
-    );
+    return <div className="max-w-6xl mx-auto p-6 text-gray-600">Loading…</div>;
   }
   if (error) {
     return (
@@ -177,24 +188,28 @@ export default function ReviewClient({
       {/* Left: Player + coach toolbar */}
       <div className="md:col-span-3 space-y-4">
         <div className="rounded-2xl overflow-hidden shadow border border-gray-200 bg-black">
-  {videoSrc ? (
-    <MuxPlayer
-      /* layout */
-      style={{ aspectRatio: "16 / 9", width: "100%", height: "auto" }}
-      /* playback */
-      src={videoSrc}
-      controls
-      playsinline
-      /* cosmetics */
-      primary-color="#111111"
-      secondary-color="#999999"
-      stream-type="on-demand"
-      {...(playbackId ? { "playback-id": playbackId } : {})}
-    />
-  ) : (
-    <div className="p-8 text-white text-center">No video source available.</div>
-  )}
-</div>
+          {playbackId || videoSrc ? (
+            <MuxPlayer
+              style={{ aspectRatio: "16 / 9", width: "100%", height: "auto" }}
+              controls
+              playsinline
+              primary-color="#111111"
+              secondary-color="#999999"
+              stream-type="on-demand"
+              {...(playbackId
+                ? playbackToken
+                  ? { "playback-id": playbackId, "playback-token": playbackToken }
+                  : videoSrc
+                  ? { "playback-id": playbackId, src: videoSrc }
+                  : { "playback-id": playbackId }
+                : { src: videoSrc })}
+            />
+          ) : (
+            <div className="p-8 text-white text-center">
+              No video source available.
+            </div>
+          )}
+        </div>
 
         {!readOnly && (
           <div className="flex flex-wrap items-center gap-3">
@@ -225,10 +240,10 @@ export default function ReviewClient({
                 <button
                   className="w-full text-left px-3 py-2 rounded-xl border border-gray-200 hover:bg-gray-50"
                   onClick={() => {
-                    const ev = document.querySelector("mux-player") as any;
-                    if (ev && typeof ev.currentTime === "number") {
-                      ev.currentTime = n.at;
-                      ev.play?.();
+                    const player = document.querySelector("mux-player") as any;
+                    if (player && typeof player.currentTime === "number") {
+                      player.currentTime = n.at;
+                      player.play?.();
                     }
                   }}
                 >
@@ -244,7 +259,9 @@ export default function ReviewClient({
 
         <section className="rounded-2xl border border-gray-200 p-4">
           <h2 className="text-base font-semibold">Coach’s Summary</h2>
-          <p className="text-sm text-gray-500 mt-1">High-level takeaways and next steps.</p>
+          <p className="text-sm text-gray-500 mt-1">
+            High-level takeaways and next steps.
+          </p>
           {readOnly ? (
             <div className="mt-3 whitespace-pre-wrap text-gray-800 bg-gray-50 rounded-xl p-3 border border-gray-200 min-h-[96px]">
               {summary || <span className="text-gray-400">No summary yet.</span>}
@@ -275,7 +292,6 @@ function AddNoteForm({
     const clean = text.trim();
     if (!clean) return;
 
-    // Read current time from mux-player web component
     const player = document.querySelector("mux-player") as any;
     const at = Math.floor((player?.currentTime as number) ?? 0);
 
