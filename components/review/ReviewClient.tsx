@@ -66,10 +66,9 @@ export default function ReviewClient({
       setNotes(notesJson?.notes ?? notesJson ?? []);
 
       // 3) Mux playback (signed URL or HLS)
-      const muxRes = await fetch(
-        `/api/svr/mux-playback?submissionId=${encodeURIComponent(submissionId)}${qs}`,
-        { cache: "no-store" }
-      );
+      const muxRes = await fetch(`/api/svr/mux/playback-token?videoId=${encodeURIComponent(submissionId)}${qs}`,
+      { cache: "no-store" 
+      });
       if (!muxRes.ok) throw new Error(`Failed to load playback token (${muxRes.status})`);
       const muxJson = await muxRes.json();
       setVideoSrc(muxJson?.signedUrl ?? muxJson?.hls ?? muxJson?.src ?? "");
