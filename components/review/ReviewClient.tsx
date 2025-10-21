@@ -10,9 +10,9 @@ interface Submission {
   owner_email?: string;
   owner_name?: string;
   mux_asset_id?: string;
-  mux_playback_id?: string;           // common field
-  playback_id?: string;               // alt naming
-  muxPlaybackId?: string;             // alt naming
+  mux_playback_id?: string;   // common
+  playback_id?: string;       // alt naming
+  muxPlaybackId?: string;     // alt naming
   status?: string;
   review?: { summary?: string } | null;
 }
@@ -40,18 +40,29 @@ export default function ReviewClient({
   const [notes, setNotes] = React.useState<Note[]>([]);
   const [summary, setSummary] = React.useState<string>("");
   const [videoSrc, setVideoSrc] = React.useState<string>("");
+  const [playbackId, setPlaybackId] = React.useState<string>("");
   const [error, setError] = React.useState<string | null>(null);
 
-  const videoRef = React.useRef<HTMLVideoElement | null>(null);
   const qs = token ? `?token=${encodeURIComponent(token)}` : "";
 
-  function getPlaybackId(sub: Submission | null | undefined) {
-    if (!sub) return undefined;
+  // Load mux-player web component (works great with HLS on Chrome)
+  React.useEffect(() => {
+    // don’t re-add if already present
+    if (document.querySelector('script[data-mux-player]')) return;
+    const s = document.createElement("script");
+    s.src = "https://cdn.jsdelivr.net/npm/@mux/mux-player";
+    s.defer = true;
+    s.setAttribute("data-mux-player", "1");
+    document.head.appendChild(s);
+  }, []);
+
+  function getPlaybackFrom(sub: Submission | null | undefined) {
     return (
-      (sub as any).mux_playback_id ||
-      (sub as any).playback_id ||
-      (sub as any).muxPlaybackId
-    ) as string | undefined;
+      sub?.mux_playback_id ||
+      (sub as any)?.playback_id ||
+      (sub as any)?.muxPlaybackId ||
+      ""
+    );
   }
 
   async function load() {
@@ -59,7 +70,7 @@ export default function ReviewClient({
       setLoading(true);
       setError(null);
 
-      // 1) Submission
+      // 1) Submission (server returns full record)
       const subRes = await fetch(
         `/api/svr/submission/${encodeURIComponent(submissionId)}${qs}`,
         { cache: "no-store" }
@@ -70,6 +81,10 @@ export default function ReviewClient({
       setSubmission(sub);
       setSummary(sub?.review?.summary ?? "");
 
+      // Resolve playback id from submission
+      const pb = getPlaybackFrom(sub);
+      setPlaybackId(pb);
+
       // 2) Notes (expects query key: videoId)
       const notesRes = await fetch(
         `/api/svr/notes?videoId=${encodeURIComponent(submissionId)}${qs}`,
@@ -79,19 +94,26 @@ export default function ReviewClient({
       const notesJson = await notesRes.json();
       setNotes(notesJson?.notes ?? notesJson ?? []);
 
-      // 3) Mux playback (use the *playbackId* from the submission)
-      const playbackId = getPlaybackId(sub);
-      if (!playbackId) {
+      // 3) Mux playback (sign for *playback id*, not submission id)
+      if (!pb) {
         throw new Error("This submission has no Mux playbackId.");
       }
-
       const muxRes = await fetch(
-        `/api/mux/playback/${encodeURIComponent(playbackId)}${qs}`,
+        `/api/mux/playback/${encodeURIComponent(pb)}${qs}`,
         { cache: "no-store" }
       );
       if (!muxRes.ok) throw new Error(`Failed to load playback token (${muxRes.status})`);
-      const muxJson = await muxRes.json();
-      setVideoSrc(muxJson?.signedUrl ?? muxJson?.hls ?? muxJson?.src ?? "");
+      const muxJson: any = await muxRes.json();
+
+      // Accept various shapes from your API
+      const src: string =
+        muxJson?.signedUrl ||
+        muxJson?.hls ||
+        muxJson?.url ||
+        muxJson?.src ||
+        ""; // final fallback below if empty
+
+      setVideoSrc(src || `https://stream.mux.com/${pb}.m3u8`);
     } catch (e: any) {
       setError(e?.message ?? "Something went wrong.");
     } finally {
@@ -104,7 +126,7 @@ export default function ReviewClient({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [submissionId, token]);
 
-  // ---- Coach actions -----------------------------------------
+  // -------- Coach actions --------
   async function addNote(atSeconds: number, text: string) {
     const body = { videoId: submissionId, at: atSeconds, text, token };
     const r = await fetch("/api/svr/notes", {
@@ -129,42 +151,52 @@ export default function ReviewClient({
     alert("Student notified.");
   }
 
-  function handleNoteClick(n: Note) {
-    if (videoRef.current) {
-      videoRef.current.currentTime = n.at;
-      videoRef.current.focus();
-      void videoRef.current.play().catch(() => {});
-    }
+  // -------- Render --------
+  if (loading) {
+    return (
+      <div className="max-w-6xl mx-auto p-6 text-gray-600">
+        Loading…
+      </div>
+    );
   }
-
-  // ---- Render ------------------------------------------------
-  if (loading) return <div className="p-6 text-gray-600">Loading…</div>;
-  if (error) return <div className="p-6 text-red-600">{error}</div>;
-  if (!submission) return <div className="p-6">Submission not found.</div>;
+  if (error) {
+    return (
+      <div className="max-w-3xl mx-auto p-6 rounded-xl bg-rose-50 text-rose-700 border border-rose-200">
+        {error}
+      </div>
+    );
+  }
+  if (!submission) {
+    return <div className="p-6">Submission not found.</div>;
+  }
 
   return (
     <div className="max-w-6xl mx-auto p-4 md:p-6 grid md:grid-cols-5 gap-6">
-      {/* Player */}
-      <div className="md:col-span-3">
-        <div className="bg-black rounded-2xl overflow-hidden shadow">
+      {/* Left: Player + coach toolbar */}
+      <div className="md:col-span-3 space-y-4">
+        <div className="rounded-2xl overflow-hidden shadow border border-gray-200 bg-black">
           {videoSrc ? (
-            <video
-              ref={videoRef}
-              className="w-full h-auto"
+            // mux-player renders nicely and works with HLS in Chrome
+            // @ts-ignore (web component)
+            <mux-player
+              style={{ aspectRatio: "16 / 9", width: "100%", height: "auto" }}
+              stream-type="on-demand"
+              playback-id={undefined}
               src={videoSrc}
+              // helpful UI bits:
+              primary-color="#111111"
+              secondary-color="#999999"
+              autoplay="false"
               controls
-              playsInline
-              preload="metadata"
             />
           ) : (
             <div className="p-8 text-white text-center">No video source available.</div>
           )}
         </div>
 
-        {/* Coach-only toolbar */}
         {!readOnly && (
-          <div className="mt-4 flex flex-wrap items-center gap-3">
-            <AddNoteForm onAdd={addNote} videoRef={videoRef} />
+          <div className="flex flex-wrap items-center gap-3">
+            <AddNoteForm onAdd={addNote} />
             <button
               onClick={markReviewedAndNotify}
               className="px-4 py-2 rounded-xl bg-zinc-900 text-white hover:bg-zinc-800"
@@ -175,20 +207,28 @@ export default function ReviewClient({
         )}
       </div>
 
-      {/* Notes + Summary */}
+      {/* Right: Notes + Summary */}
       <div className="md:col-span-2 space-y-6">
-        <section>
-          <h2 className="text-lg font-semibold">Timestamped Notes</h2>
+        <section className="rounded-2xl border border-gray-200 p-4">
+          <h2 className="text-base font-semibold">Timestamped Notes</h2>
           <p className="text-sm text-gray-500 mt-1">
             Click a note to jump the video to that moment.
           </p>
           <ul className="mt-3 space-y-2">
-            {notes.length === 0 && <li className="text-gray-500">No notes yet.</li>}
+            {notes.length === 0 && (
+              <li className="text-gray-500">No notes yet.</li>
+            )}
             {notes.map((n) => (
               <li key={n.id}>
                 <button
                   className="w-full text-left px-3 py-2 rounded-xl border border-gray-200 hover:bg-gray-50"
-                  onClick={() => handleNoteClick(n)}
+                  onClick={() => {
+                    const ev = document.querySelector("mux-player") as any;
+                    if (ev && typeof ev.currentTime === "number") {
+                      ev.currentTime = n.at;
+                      ev.play?.();
+                    }
+                  }}
                 >
                   <span className="font-mono text-xs mr-2 bg-gray-100 px-2 py-0.5 rounded">
                     {formatTime(n.at)}
@@ -200,8 +240,8 @@ export default function ReviewClient({
           </ul>
         </section>
 
-        <section>
-          <h2 className="text-lg font-semibold">Coach’s Summary</h2>
+        <section className="rounded-2xl border border-gray-200 p-4">
+          <h2 className="text-base font-semibold">Coach’s Summary</h2>
           <p className="text-sm text-gray-500 mt-1">High-level takeaways and next steps.</p>
           {readOnly ? (
             <div className="mt-3 whitespace-pre-wrap text-gray-800 bg-gray-50 rounded-xl p-3 border border-gray-200 min-h-[96px]">
@@ -223,10 +263,8 @@ export default function ReviewClient({
 
 function AddNoteForm({
   onAdd,
-  videoRef,
 }: {
   onAdd: (atSeconds: number, text: string) => Promise<void>;
-  videoRef: React.MutableRefObject<HTMLVideoElement | null>;
 }) {
   const [text, setText] = React.useState("");
   const [busy, setBusy] = React.useState(false);
@@ -234,7 +272,11 @@ function AddNoteForm({
   async function handleAdd() {
     const clean = text.trim();
     if (!clean) return;
-    const at = Math.floor(videoRef.current?.currentTime ?? 0);
+
+    // Read current time from mux-player web component
+    const player = document.querySelector("mux-player") as any;
+    const at = Math.floor((player?.currentTime as number) ?? 0);
+
     try {
       setBusy(true);
       await onAdd(at, clean);
