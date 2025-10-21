@@ -1,31 +1,52 @@
-import type { NextRequest } from "next/server";
-import { video } from "@/lib/mux"; // your Mux SDK client (already working elsewhere)
+// app/api/mux/playback/[id]/route.ts
+import { NextRequest, NextResponse } from "next/server";
+import jwt from "jsonwebtoken";
 
-export const runtime = "nodejs";
-export const dynamic = "force-dynamic";
+const KEY_ID = process.env.MUX_SIGNING_KEY_ID!;
+const KEY_SECRET = process.env.MUX_SIGNING_KEY_SECRET!;
 
-function J(d: unknown, s = 200) {
-  return new Response(JSON.stringify(d, null, 2), {
-    status: s,
-    headers: { "content-type": "application/json" },
-  });
+function signPlaybackToken(playbackId: string, ttlSeconds = 60 * 60) {
+  // Mux requires HS256 with kid header and { aud: 'v', sub: playbackId }
+  return jwt.sign(
+    {
+      aud: "v",
+      sub: playbackId,
+      exp: Math.floor(Date.now() / 1000) + ttlSeconds,
+    },
+    KEY_SECRET,
+    { algorithm: "HS256", keyid: KEY_ID }
+  );
 }
 
-export async function GET(_req: NextRequest, ctx: { params: { id: string } }) {
+export async function GET(
+  _req: NextRequest,
+  { params }: { params: { id: string } }
+) {
   try {
-    const id = ctx.params.id;
-    // @ts-ignore - SDK typing varies, use 'any'
-    const pb: any = await (video as any).playbackIds.retrieve(id);
-    // pb.data => { id, policy, object: 'asset'|'live_stream', object_id: '...' }
-    const meta: any = pb?.data || pb; // some SDKs wrap in .data
-    let asset: any = null;
-    if (meta?.object === "asset" && meta?.object_id) {
-      // @ts-ignore
-      const a = await (video as any).assets.retrieve(meta.object_id);
-      asset = a?.data || a;
+    const playbackId = params.id;
+    if (!playbackId) {
+      return NextResponse.json({ error: "Missing playbackId" }, { status: 400 });
     }
-    return J({ playback: meta, asset: asset ? { id: asset.id, status: asset.status } : null });
+    if (!KEY_ID || !KEY_SECRET) {
+      return NextResponse.json(
+        { error: "MUX_SIGNING_KEY_ID / MUX_SIGNING_KEY_SECRET not set" },
+        { status: 500 }
+      );
+    }
+
+    const token = signPlaybackToken(playbackId);
+    const signedUrl = `https://stream.mux.com/${playbackId}.m3u8?token=${token}`;
+
+    // Return BOTH to keep the client flexible
+    return NextResponse.json({
+      playbackId,
+      playbackToken: token,
+      signedUrl,
+    });
   } catch (e: any) {
-    return J({ error: "LOOKUP_FAILED", message: e?.message || String(e) }, 500);
+    return NextResponse.json(
+      { error: e?.message ?? "Server error" },
+      { status: 500 }
+    );
   }
 }
