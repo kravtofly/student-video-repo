@@ -2,22 +2,59 @@
 
 import React from "react";
 
+/** ---------- Types that match your current API ---------- */
 type ViewerRole = "coach" | "student";
 
 type Submission = {
   id: string;
   title?: string | null;
-  mux_playback_id?: string | null;
-  playback_id?: string | null;
+  mux_playback_id?: string | null; // primary
+  playback_id?: string | null;     // legacy alias
   owner_name?: string | null;
   review?: { summary?: string | null } | null;
 };
 
-type Note = { id: string; t_seconds: number; body: string; created_at: string };
+type Note = {
+  id: string;
+  t_seconds: number; // server returns canonical seconds here
+  body: string;
+  created_at: string;
+};
 
-// TS-friendly alias for the web component
+// TS-friendly alias for the mux-player web component
 const MuxPlayer = "mux-player" as any;
 
+/** ---------- Helper: note payload that satisfies old & new handlers ---------- */
+function buildNotePayload(args: {
+  submissionId: string;
+  coachEmail?: string | null;
+  t: number;
+  body: string;
+  token?: string | null;
+}) {
+  const { submissionId, coachEmail, t, body, token } = args;
+  return {
+    // current shape
+    videoId: submissionId,
+    coachEmail: coachEmail || undefined,
+    t,          // seconds
+    body,       // note text
+
+    // legacy aliases (some older endpoints looked for these)
+    at: t,
+    text: body,
+
+    // pass-through if your API validates token in body
+    token: token || undefined,
+  };
+}
+
+/** =========================================================
+ * ReviewClient
+ * - Pulls submission + playbackToken from /api/svr/submission/:id
+ * - Loads/saves notes against /api/svr/notes
+ * - Mirrors the old layout (player left, notes+summary right)
+ * ========================================================= */
 export default function ReviewClient({
   submissionId,
   token,
@@ -38,20 +75,21 @@ export default function ReviewClient({
   const [notes, setNotes] = React.useState<Note[]>([]);
   const [summary, setSummary] = React.useState<string>("");
 
-  // inline Add Note UI
+  // Inline "add note" UI
   const [noteText, setNoteText] = React.useState("");
   const [savingNote, setSavingNote] = React.useState(false);
 
-  // coachEmail comes from Webflow dashboard link: ?coachEmail=...
+  // Read coachEmail from the querystring (Webflow dashboard links provide it)
   const coachEmail = React.useMemo(() => {
     if (typeof window === "undefined") return "";
     const qs = new URLSearchParams(window.location.search);
     return qs.get("coachEmail") || "";
   }, []);
 
-  const qs = token ? `?token=${encodeURIComponent(token)}` : "";
+  // Keep ?token=... on all requests (your API uses this on GETs)
+  const qsSuffix = token ? `?token=${encodeURIComponent(token)}` : "";
 
-  // load mux-player script once
+  /** Load mux-player script once */
   React.useEffect(() => {
     if (document.querySelector('script[data-mux-player]')) return;
     const s = document.createElement("script");
@@ -61,32 +99,35 @@ export default function ReviewClient({
     document.head.appendChild(s);
   }, []);
 
+  /** Resolve playbackId from either field name */
   function getPlaybackId(sub: Submission | null | undefined) {
-    return (sub?.mux_playback_id || (sub as any)?.playback_id || "") as string;
+    return (sub?.mux_playback_id || sub?.playback_id || "") as string;
   }
 
+  /** Fetch submission + playbackToken (your legacy route returns both) */
   async function loadSubmissionAndToken() {
     const res = await fetch(
-      `/api/svr/submission/${encodeURIComponent(submissionId)}${qs}`,
+      `/api/svr/submission/${encodeURIComponent(submissionId)}${qsSuffix}`,
       { cache: "no-store" }
     );
     const json = await res.json();
-    if (!res.ok || json.error) {
-      throw new Error(json.error || `Failed to load submission (${res.status})`);
+    if (!res.ok || json?.error) {
+      throw new Error(json?.error || `Failed to load submission (${res.status})`);
     }
     const sub: Submission = json.submission ?? json;
     setSubmission(sub);
     setSummary(sub?.review?.summary ?? "");
-    setPlaybackToken(json.playbackToken ?? null); // <- matches your legacy API
+    setPlaybackToken(json.playbackToken ?? null); // ← important for signed playback
   }
 
+  /** Fetch notes */
   async function loadNotes() {
     const res = await fetch(
-      `/api/svr/notes?videoId=${encodeURIComponent(submissionId)}${qs}`,
+      `/api/svr/notes?videoId=${encodeURIComponent(submissionId)}${qsSuffix}`,
       { cache: "no-store" }
     );
     const json = await res.json();
-    if (json.error) throw new Error(json.error);
+    if (json?.error) throw new Error(json.error);
     setNotes(json.notes || []);
   }
 
@@ -106,7 +147,7 @@ export default function ReviewClient({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [submissionId, token]);
 
-  // ---------- Coach actions ----------
+  /** Add note at current time (coach) */
   async function addNoteAtCurrentTime() {
     if (!submissionId) return;
 
@@ -117,15 +158,18 @@ export default function ReviewClient({
 
     try {
       setSavingNote(true);
-      const r = await fetch("/api/svr/notes", {
+      const payload = buildNotePayload({
+        submissionId,
+        coachEmail,
+        t,
+        body,
+        token,
+      });
+
+      const r = await fetch(`/api/svr/notes${qsSuffix}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          videoId: submissionId,
-          coachEmail,        // <- REQUIRED by your existing API
-          t,                 // seconds
-          body,              // note text
-        }),
+        body: JSON.stringify(payload),
       });
       const j = await r.json();
       if (!r.ok || j?.error) throw new Error(j?.error || "Failed to save note");
@@ -136,15 +180,17 @@ export default function ReviewClient({
     }
   }
 
+  /** Mark reviewed (coach) */
   async function markReviewedAndNotify() {
     if (!submissionId) return;
-    const r = await fetch("/api/svr/mark-reviewed", {
+    const r = await fetch(`/api/svr/mark-reviewed${qsSuffix}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         videoId: submissionId,
-        coachEmail,          // many backends also check this
+        coachEmail: coachEmail || undefined,
         reviewSummary: summary || null,
+        token: token || undefined,
       }),
     });
     const j = await r.json();
@@ -152,7 +198,7 @@ export default function ReviewClient({
     alert("Student notified!");
   }
 
-  // ---------- Render ----------
+  /** Render states */
   if (loading) {
     return <main className="max-w-5xl mx-auto p-6 text-gray-600">Loading…</main>;
   }
@@ -171,55 +217,55 @@ export default function ReviewClient({
 
   return (
     <main className="mx-auto max-w-[1100px] p-4 md:p-6 font-[system-ui,-apple-system,Segoe UI,Roboto,Arial]">
-      {/* Header */}
+      {/* Header (compact, like your original) */}
       <h1 className="text-xl font-semibold mb-4">Coach Review</h1>
 
-      {/* Two-column grid (video left, notes+summary right) */}
+      {/* Two-column grid: video left, notes+summary right */}
       <div className="grid gap-5 items-start md:grid-cols-[1.2fr_.8fr]">
-        {/* LEFT: Player card */}
-        <div className="rounded-2xl border border-gray-200 overflow-hidden bg-black">
-          {playbackId && playbackToken ? (
-            <MuxPlayer
-              id="player"
-              style={{ width: "100%", height: "auto" }}
-              stream-type="on-demand"
-              playback-id={playbackId}
-              playback-token={playbackToken}
-              controls
-              playsinline
-            />
-          ) : (
-            <div className="p-8 text-white text-center">
-              Missing playback id or token.
-            </div>
-          )}
-          <div className="p-2 bg-white text-xs text-gray-600">{submission.title || ""}</div>
-        </div>
-
-        {/* RIGHT: Notes + Summary */}
-        <div className="space-y-5">
-          {/* Notes */}
-          <section className="rounded-2xl border border-gray-200 p-4 bg-white">
-            <h3 className="font-semibold mb-2">Timestamped Notes</h3>
-
-            {!readOnly && (
-              <div className="flex gap-2 mb-3">
-                <input
-                  value={noteText}
-                  onChange={(e) => setNoteText(e.target.value)}
-                  placeholder="Write a quick note…"
-                  className="flex-1 min-w-0 px-3 py-2 rounded-lg border border-gray-300"
-                />
-                <button
-                  onClick={addNoteAtCurrentTime}
-                  disabled={savingNote || !noteText.trim()}
-                  className="px-3 py-2 rounded-lg border border-gray-300 bg-[#fafafa] hover:bg-gray-50 disabled:opacity-50"
-                >
-                  Save @ current time
-                </button>
+        {/* Player Card */}
+        <div className="rounded-2xl overflow-hidden border border-gray-200 bg-white">
+          <div className="bg-black">
+            {playbackId && playbackToken ? (
+              <MuxPlayer
+                id="player"
+                style={{ width: "100%", height: "auto" }}
+                stream-type="on-demand"
+                playback-id={playbackId}
+                playback-token={playbackToken}
+                controls
+                playsinline
+              />
+            ) : (
+              <div className="p-8 text-white text-center">
+                Missing playback id or token.
               </div>
             )}
+          </div>
+          <div className="p-2 text-xs text-gray-600">{submission.title || ""}</div>
 
+          {!readOnly && (
+            <div className="p-3 border-t border-gray-100 bg-white flex gap-2">
+              <input
+                value={noteText}
+                onChange={(e) => setNoteText(e.target.value)}
+                placeholder="Write a quick note…"
+                className="flex-1 min-w-0 px-3 py-2 rounded-lg border border-gray-300"
+              />
+              <button
+                onClick={addNoteAtCurrentTime}
+                disabled={savingNote || !noteText.trim()}
+                className="px-3 py-2 rounded-lg border border-gray-300 bg-[#fafafa] hover:bg-gray-50 disabled:opacity-50"
+              >
+                Save @ current time
+              </button>
+            </div>
+          )}
+        </div>
+
+        {/* Right column: Notes + Summary */}
+        <div className="space-y-5">
+          <section className="rounded-2xl border border-gray-200 p-4 bg-white">
+            <h3 className="font-semibold mb-2">Timestamped Notes</h3>
             {notes.length === 0 ? (
               <p className="text-gray-500">No notes yet.</p>
             ) : (
@@ -247,7 +293,6 @@ export default function ReviewClient({
             )}
           </section>
 
-          {/* Summary */}
           <section className="rounded-2xl border border-gray-200 p-4 bg-white">
             <h3 className="font-semibold mb-2">Coach’s Summary</h3>
             <textarea
@@ -274,6 +319,7 @@ export default function ReviewClient({
   );
 }
 
+/** ---------- Utils ---------- */
 function formatTime(s: number) {
   s = Math.max(0, Math.floor(s));
   const m = Math.floor(s / 60);
