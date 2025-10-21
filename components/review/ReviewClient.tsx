@@ -10,7 +10,9 @@ interface Submission {
   owner_email?: string;
   owner_name?: string;
   mux_asset_id?: string;
-  mux_playback_id?: string;
+  mux_playback_id?: string;           // common field
+  playback_id?: string;               // alt naming
+  muxPlaybackId?: string;             // alt naming
   status?: string;
   review?: { summary?: string } | null;
 }
@@ -43,6 +45,15 @@ export default function ReviewClient({
   const videoRef = React.useRef<HTMLVideoElement | null>(null);
   const qs = token ? `?token=${encodeURIComponent(token)}` : "";
 
+  function getPlaybackId(sub: Submission | null | undefined) {
+    if (!sub) return undefined;
+    return (
+      (sub as any).mux_playback_id ||
+      (sub as any).playback_id ||
+      (sub as any).muxPlaybackId
+    ) as string | undefined;
+  }
+
   async function load() {
     try {
       setLoading(true);
@@ -59,15 +70,24 @@ export default function ReviewClient({
       setSubmission(sub);
       setSummary(sub?.review?.summary ?? "");
 
-      // 2) Notes
-      const notesRes = await fetch(`/api/svr/notes?videoId=${encodeURIComponent(submissionId)}${qs}`, { cache: "no-store" });
+      // 2) Notes (expects query key: videoId)
+      const notesRes = await fetch(
+        `/api/svr/notes?videoId=${encodeURIComponent(submissionId)}${qs}`,
+        { cache: "no-store" }
+      );
       if (!notesRes.ok) throw new Error(`Failed to load notes (${notesRes.status})`);
       const notesJson = await notesRes.json();
       setNotes(notesJson?.notes ?? notesJson ?? []);
 
-      // 3) Mux playback (signed URL or HLS)
-      const muxRes = await fetch(`/api/mux/playback/${encodeURIComponent(submissionId)}${qs}`,
-      { cache: "no-store" }
+      // 3) Mux playback (use the *playbackId* from the submission)
+      const playbackId = getPlaybackId(sub);
+      if (!playbackId) {
+        throw new Error("This submission has no Mux playbackId.");
+      }
+
+      const muxRes = await fetch(
+        `/api/mux/playback/${encodeURIComponent(playbackId)}${qs}`,
+        { cache: "no-store" }
       );
       if (!muxRes.ok) throw new Error(`Failed to load playback token (${muxRes.status})`);
       const muxJson = await muxRes.json();
@@ -84,6 +104,7 @@ export default function ReviewClient({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [submissionId, token]);
 
+  // ---- Coach actions -----------------------------------------
   async function addNote(atSeconds: number, text: string) {
     const body = { videoId: submissionId, at: atSeconds, text, token };
     const r = await fetch("/api/svr/notes", {
@@ -116,6 +137,7 @@ export default function ReviewClient({
     }
   }
 
+  // ---- Render ------------------------------------------------
   if (loading) return <div className="p-6 text-gray-600">Loading…</div>;
   if (error) return <div className="p-6 text-red-600">{error}</div>;
   if (!submission) return <div className="p-6">Submission not found.</div>;
