@@ -2,6 +2,8 @@
 
 import React from "react";
 
+const MuxPlayer = 'mux-player' as any; // TS: treat the web component as any
+
 type ViewerRole = "coach" | "student";
 
 interface Submission {
@@ -176,27 +178,23 @@ export default function ReviewClient({
       <div className="md:col-span-3 space-y-4">
         <div className="rounded-2xl overflow-hidden shadow border border-gray-200 bg-black">
   {videoSrc ? (
-    <>
-      {/* @ts-expect-error - mux-player is a web component; TS doesn't know custom attrs like `src` */}
-      <mux-player
-        /* layout */
-        style={{ aspectRatio: "16 / 9", width: "100%", height: "auto" }}
-        /* playback */
-        src={videoSrc}
-        controls
-        playsinline
-        /* cosmetics */
-        primary-color="#111111"
-        secondary-color="#999999"
-        stream-type="on-demand"
-        {...(playbackId ? { "playback-id": playbackId } : {})}
-      />
-    </>
+    <MuxPlayer
+      /* layout */
+      style={{ aspectRatio: "16 / 9", width: "100%", height: "auto" }}
+      /* playback */
+      src={videoSrc}
+      controls
+      playsinline
+      /* cosmetics */
+      primary-color="#111111"
+      secondary-color="#999999"
+      stream-type="on-demand"
+      {...(playbackId ? { "playback-id": playbackId } : {})}
+    />
   ) : (
     <div className="p-8 text-white text-center">No video source available.</div>
   )}
 </div>
-
 
         {!readOnly && (
           <div className="flex flex-wrap items-center gap-3">
