@@ -2,27 +2,6 @@
 
 import React from "react";
 
-declare global {
-  namespace JSX {
-    interface IntrinsicElements {
-      "mux-player": React.DetailedHTMLProps<
-        React.HTMLAttributes<HTMLElement>,
-        HTMLElement
-      > & {
-        src?: string;
-        "stream-type"?: string;
-        "playback-id"?: string;
-        "playback-token"?: string;
-        controls?: boolean;
-        playsinline?: boolean;
-        "primary-color"?: string;
-        "secondary-color"?: string;
-      };
-    }
-  }
-}
-
-
 type ViewerRole = "coach" | "student";
 
 interface Submission {
@@ -197,23 +176,27 @@ export default function ReviewClient({
       <div className="md:col-span-3 space-y-4">
         <div className="rounded-2xl overflow-hidden shadow border border-gray-200 bg-black">
   {videoSrc ? (
-    <mux-player
-      /* layout */
-      style={{ aspectRatio: "16 / 9", width: "100%", height: "auto" }}
-      /* playback */
-      src={videoSrc}
-      controls
-      playsinline
-      /* cosmetics */
-      primary-color="#111111"
-      secondary-color="#999999"
-      stream-type="on-demand"
-      {...(playbackId ? { "playback-id": playbackId } : {})}
-    />
+    <>
+      {/* @ts-expect-error - mux-player is a web component; TS doesn't know custom attrs like `src` */}
+      <mux-player
+        /* layout */
+        style={{ aspectRatio: "16 / 9", width: "100%", height: "auto" }}
+        /* playback */
+        src={videoSrc}
+        controls
+        playsinline
+        /* cosmetics */
+        primary-color="#111111"
+        secondary-color="#999999"
+        stream-type="on-demand"
+        {...(playbackId ? { "playback-id": playbackId } : {})}
+      />
+    </>
   ) : (
     <div className="p-8 text-white text-center">No video source available.</div>
   )}
 </div>
+
 
         {!readOnly && (
           <div className="flex flex-wrap items-center gap-3">
