@@ -60,10 +60,7 @@ export default function ReviewClient({
       setSummary(sub?.review?.summary ?? "");
 
       // 2) Notes
-      const notesRes = await fetch(
-        `/api/svr/notes?submissionId=${encodeURIComponent(submissionId)}${qs}`,
-        { cache: "no-store" }
-      );
+      const notesRes = await fetch(`/api/svr/notes?videoId=${encodeURIComponent(submissionId)}${qs}`, { cache: "no-store" });
       if (!notesRes.ok) throw new Error(`Failed to load notes (${notesRes.status})`);
       const notesJson = await notesRes.json();
       setNotes(notesJson?.notes ?? notesJson ?? []);
@@ -89,7 +86,7 @@ export default function ReviewClient({
   }, [submissionId, token]);
 
   async function addNote(atSeconds: number, text: string) {
-    const body = { submissionId, at: atSeconds, text, token };
+    const body = { videoId: submissionId, at: atSeconds, text, token };
     const r = await fetch("/api/svr/notes", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
