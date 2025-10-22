@@ -16,7 +16,7 @@ type Submission = {
 
 type Note = {
   id: string;
-  t_seconds: number;
+  t_seconds: number; // server returns canonical seconds here
   body: string;
   created_at: string;
 };
@@ -24,9 +24,7 @@ type Note = {
 // TS-friendly alias for the mux-player web component
 const MuxPlayer = "mux-player" as any;
 
-/** ---------- Helpers ---------- */
-const LS_TOKEN_KEY = (id: string) => `coachToken:${id}`;
-
+/** ---------- Helper: note payload that satisfies old & new handlers ---------- */
 function buildNotePayload(args: {
   submissionId: string;
   coachEmail?: string | null;
@@ -39,29 +37,26 @@ function buildNotePayload(args: {
     // current shape
     videoId: submissionId,
     coachEmail: coachEmail || undefined,
-    t,
-    body,
+    t,          // seconds
+    body,       // note text
+    token: token || undefined,
 
-    // legacy aliases
+    // legacy aliases (some older endpoints looked for these)
     at: t,
     text: body,
-
-    // some handlers read token from body
-    token: token || undefined,
   };
-}
-
-function getQS(name: string) {
-  if (typeof window === "undefined") return "";
-  return new URLSearchParams(window.location.search).get(name) || "";
 }
 
 /** =========================================================
  * ReviewClient
+ *  - If no token is provided in the URL, it will fetch one using
+ *    /api/svr/review-token?videoId=...&coachEmail=...
+ *  - Loads submission, notes, and mux playback token
+ *  - Saves notes with the token
  * ========================================================= */
 export default function ReviewClient({
   submissionId,
-  token: tokenFromProps,
+  token: initialToken,
   readOnly,
   viewerRole,
 }: {
@@ -76,8 +71,6 @@ export default function ReviewClient({
   const [submission, setSubmission] = React.useState<Submission | null>(null);
   const [playbackToken, setPlaybackToken] = React.useState<string | null>(null);
 
-  const [apiToken, setApiToken] = React.useState<string | null>(null); // ← token used for notes API
-
   const [notes, setNotes] = React.useState<Note[]>([]);
   const [summary, setSummary] = React.useState<string>("");
 
@@ -85,10 +78,20 @@ export default function ReviewClient({
   const [noteText, setNoteText] = React.useState("");
   const [savingNote, setSavingNote] = React.useState(false);
 
-  // coachEmail can be provided by dashboard link
-  const coachEmail = React.useMemo(() => getQS("coachEmail"), []);
+  // effective token we will use (from URL or fetched)
+  const [apiToken, setApiToken] = React.useState<string | null>(initialToken);
 
-  // mux-player loader
+  // Read coachEmail from the querystring (Webflow dashboard links provide it)
+  const coachEmail = React.useMemo(() => {
+    if (typeof window === "undefined") return "";
+    const qs = new URLSearchParams(window.location.search);
+    return qs.get("coachEmail") || "";
+  }, []);
+
+  /** small helper to build ?token= suffix for GETs */
+  const qsToken = apiToken ? `?token=${encodeURIComponent(apiToken)}` : "";
+
+  /** Load mux-player script once */
   React.useEffect(() => {
     if (document.querySelector('script[data-mux-player]')) return;
     const s = document.createElement("script");
@@ -98,66 +101,43 @@ export default function ReviewClient({
     document.head.appendChild(s);
   }, []);
 
+  /** Resolve playbackId from either field name */
   function getPlaybackId(sub: Submission | null | undefined) {
     return (sub?.mux_playback_id || sub?.playback_id || "") as string;
   }
 
-  /** Discover an API token (URL → localStorage → submission endpoint → fallback) */
-  async function resolveApiToken(): Promise<string | null> {
-    // 1) URL (?token=...)
-    const qsToken = getQS("token");
-    if (qsToken) {
-      try { localStorage.setItem(LS_TOKEN_KEY(submissionId), qsToken); } catch {}
-      return qsToken;
-    }
+  /** If we don’t have a token (dashboard link), try to mint one. */
+  async function ensureToken(): Promise<string | null> {
+    if (apiToken) return apiToken;
 
-    // 2) localStorage
-    try {
-      const cached = localStorage.getItem(LS_TOKEN_KEY(submissionId));
-      if (cached) return cached;
-    } catch {}
+    // Need coachEmail to mint a review token for this coach
+    if (!coachEmail) return null;
 
-    // 3) submission endpoint often returns some token variants
     try {
-      const subRes = await fetch(
-        `/api/svr/submission/${encodeURIComponent(submissionId)}` +
-          (coachEmail ? `?coachEmail=${encodeURIComponent(coachEmail)}` : ""),
+      const r = await fetch(
+        `/api/svr/review-token?videoId=${encodeURIComponent(
+          submissionId
+        )}&coachEmail=${encodeURIComponent(coachEmail)}`,
         { cache: "no-store" }
       );
-      const j = await subRes.json();
-      const discovered: string | null =
-        j?.token ||
-        j?.apiToken ||
-        j?.reviewToken ||
-        j?.notesToken ||
-        null;
-      if (discovered) {
-        try { localStorage.setItem(LS_TOKEN_KEY(submissionId), discovered); } catch {}
-        return discovered;
+      const j = await r.json();
+      if (!r.ok || j?.error) {
+        console.warn("Failed to mint review token:", j?.error || r.status);
+        return null;
       }
-    } catch { /* silent */ }
-
-    // 4) OPTIONAL: some stacks expose an apiToken from a playback endpoint
-    try {
-      const muxRes = await fetch(`/api/mux/playback/${encodeURIComponent(submissionId)}`, { cache: "no-store" });
-      if (muxRes.ok) {
-        const j = await muxRes.json();
-        const discovered = j?.apiToken || j?.token || null;
-        if (discovered) {
-          try { localStorage.setItem(LS_TOKEN_KEY(submissionId), discovered); } catch {}
-          return discovered;
-        }
-      }
-    } catch { /* silent */ }
-
-    return null;
+      const t = j?.token || null;
+      setApiToken(t);
+      return t;
+    } catch (e) {
+      console.warn("Failed to mint review token:", e);
+      return null;
+    }
   }
 
-  /** Load submission (and playback token if present) */
-  async function loadSubmission() {
+  /** Fetch submission + playbackToken (the legacy route returns both) */
+  async function loadSubmissionAndPlaybackToken() {
     const res = await fetch(
-      `/api/svr/submission/${encodeURIComponent(submissionId)}` +
-        (coachEmail ? `?coachEmail=${encodeURIComponent(coachEmail)}` : ""),
+      `/api/svr/submission/${encodeURIComponent(submissionId)}${qsToken}`,
       { cache: "no-store" }
     );
     const json = await res.json();
@@ -167,20 +147,17 @@ export default function ReviewClient({
     const sub: Submission = json.submission ?? json;
     setSubmission(sub);
     setSummary(sub?.review?.summary ?? "");
-    setPlaybackToken(json.playbackToken ?? json.muxPlaybackToken ?? null);
+    setPlaybackToken(json.playbackToken ?? null); // signed playback token for <mux-player>
   }
 
-  /** Load notes with token */
-  async function loadNotes(withToken: string | null) {
-    const tokenQS = withToken ? `&token=${encodeURIComponent(withToken)}` : "";
+  /** Fetch notes */
+  async function loadNotes() {
     const res = await fetch(
-      `/api/svr/notes?videoId=${encodeURIComponent(submissionId)}${tokenQS}`,
+      `/api/svr/notes?videoId=${encodeURIComponent(submissionId)}${qsToken}`,
       { cache: "no-store" }
     );
     const json = await res.json();
-    if (!res.ok || json?.error) {
-      throw new Error(json?.error || `Failed to load notes (${res.status})`);
-    }
+    if (json?.error) throw new Error(json.error);
     setNotes(json.notes || []);
   }
 
@@ -190,21 +167,14 @@ export default function ReviewClient({
         setLoading(true);
         setError(null);
 
-        await loadSubmission();
-
-        // Determine best token (props, URL/localStorage, then discovery)
-        const discovered =
-          tokenFromProps ||
-          (await resolveApiToken());
-
-        setApiToken(discovered);
-
-        // persist whatever we discovered
-        if (discovered) {
-          try { localStorage.setItem(LS_TOKEN_KEY(submissionId), discovered); } catch {}
+        // 1) If the URL didn’t give us a token, try to mint one (dashboard case)
+        if (!initialToken) {
+          await ensureToken();
         }
 
-        await loadNotes(discovered || null);
+        // 2) Load submission (and playback token) + notes
+        await loadSubmissionAndPlaybackToken();
+        await loadNotes();
       } catch (e: any) {
         setError(e?.message ?? "Something went wrong");
       } finally {
@@ -212,10 +182,19 @@ export default function ReviewClient({
       }
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [submissionId]);
+  }, [submissionId, initialToken, coachEmail]);
 
   /** Add note at current time (coach) */
   async function addNoteAtCurrentTime() {
+    if (!submissionId) return;
+
+    // must have an API token to save notes
+    const effectiveToken = apiToken || (await ensureToken());
+    if (!effectiveToken) {
+      alert("Failed to save note. Missing token.");
+      return;
+    }
+
     const player = document.getElementById("player") as any;
     const t = Math.floor((player?.currentTime || 0) as number);
     const body = noteText.trim();
@@ -223,48 +202,27 @@ export default function ReviewClient({
 
     try {
       setSavingNote(true);
-
-      // Make sure we have a token right now
-      let token = apiToken;
-      if (!token) {
-        token = await resolveApiToken();
-        if (token) {
-          setApiToken(token);
-          try { localStorage.setItem(LS_TOKEN_KEY(submissionId), token); } catch {}
-        }
-      }
-      if (!token) {
-        console.error("No API token available for notes POST.");
-        alert("Failed to save note. Missing token.");
-        return;
-      }
-
       const payload = buildNotePayload({
         submissionId,
         coachEmail,
         t,
         body,
-        token,
+        token: effectiveToken,
       });
 
-      const r = await fetch(`/api/svr/notes?token=${encodeURIComponent(token)}`, {
+      const r = await fetch(`/api/svr/notes?token=${encodeURIComponent(effectiveToken)}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        credentials: "include",
         body: JSON.stringify(payload),
       });
-      const raw = await r.text();
-      let j: any = {};
-      try { j = JSON.parse(raw); } catch {}
 
-      if (!r.ok || j?.error) {
-        console.error("POST /api/svr/notes failed:", { status: r.status, json: j, payload, raw });
-        alert(j?.error || "Failed to save note. Check console for details.");
-        return;
-      }
-
+      const j = await r.json();
+      if (!r.ok || j?.error) throw new Error(j?.error || "Failed to save note");
       setNoteText("");
-      await loadNotes(token);
+      await loadNotes();
+    } catch (e: any) {
+      console.error("POST /api/svr/notes failed:", e);
+      alert(e?.message || "Failed to save note. Check console for details.");
     } finally {
       setSavingNote(false);
     }
@@ -272,28 +230,24 @@ export default function ReviewClient({
 
   /** Mark reviewed (coach) */
   async function markReviewedAndNotify() {
-    // use the same apiToken if present
-    const token = apiToken || (await resolveApiToken());
-    const r = await fetch(
-      `/api/svr/mark-reviewed${token ? `?token=${encodeURIComponent(token)}` : ""}`,
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        credentials: "include",
-        body: JSON.stringify({
-          videoId: submissionId,
-          coachEmail: coachEmail || undefined,
-          reviewSummary: summary || null,
-          token: token || undefined, // legacy handlers
-        }),
-      }
-    );
-    const j = await r.json();
-    if (!r.ok || j?.error) {
-      console.error("POST /api/svr/mark-reviewed failed:", j);
-      alert(j?.error || "Failed to mark reviewed");
+    const effectiveToken = apiToken || (await ensureToken());
+    if (!effectiveToken) {
+      alert("Missing token.");
       return;
     }
+
+    const r = await fetch(`/api/svr/mark-reviewed?token=${encodeURIComponent(effectiveToken)}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        videoId: submissionId,
+        coachEmail: coachEmail || undefined,
+        reviewSummary: summary || null,
+        token: effectiveToken,
+      }),
+    });
+    const j = await r.json();
+    if (!r.ok || j?.error) throw new Error(j?.error || "Failed to mark reviewed");
     alert("Student notified!");
   }
 
@@ -315,11 +269,11 @@ export default function ReviewClient({
   const playbackId = getPlaybackId(submission);
 
   return (
-    <main className="mx-auto max-w-[1100px] p-4 md:p-6 font-[system-ui,-apple-system,Segoe UI,Roboto,Arial]">
+    <main className="mx-auto max-w-[1100px] p-4 md:p-6 font-[system-ui,-apple-system,Segoe_UI,Roboto,Arial]">
       <h1 className="text-xl font-semibold mb-4">Coach Review</h1>
 
       <div className="grid gap-5 items-start md:grid-cols-[1.2fr_.8fr]">
-        {/* Player Card */}
+        {/* Player */}
         <div className="rounded-2xl overflow-hidden border border-gray-200 bg-white">
           <div className="bg-black">
             {playbackId && playbackToken ? (
@@ -359,7 +313,7 @@ export default function ReviewClient({
           )}
         </div>
 
-        {/* Right column: Notes + Summary */}
+        {/* Notes + Summary */}
         <div className="space-y-5">
           <section className="rounded-2xl border border-gray-200 p-4 bg-white">
             <h3 className="font-semibold mb-2">Timestamped Notes</h3>
