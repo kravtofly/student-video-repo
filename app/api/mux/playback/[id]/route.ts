@@ -1,21 +1,18 @@
 // app/api/mux/playback/[id]/route.ts
 import { NextRequest, NextResponse } from "next/server";
-import jwt from "jsonwebtoken";
+import { SignJWT } from "jose";
 
 const KEY_ID = process.env.MUX_SIGNING_KEY_ID!;
 const KEY_SECRET = process.env.MUX_SIGNING_KEY_SECRET!;
 
-function signPlaybackToken(playbackId: string, ttlSeconds = 60 * 60) {
+async function signPlaybackToken(playbackId: string, ttlSeconds = 60 * 60) {
   // Mux requires HS256 with kid header and { aud: 'v', sub: playbackId }
-  return jwt.sign(
-    {
-      aud: "v",
-      sub: playbackId,
-      exp: Math.floor(Date.now() / 1000) + ttlSeconds,
-    },
-    KEY_SECRET,
-    { algorithm: "HS256", keyid: KEY_ID }
-  );
+  const secretKey = new TextEncoder().encode(KEY_SECRET);
+  return new SignJWT({ aud: "v", sub: playbackId })
+    .setProtectedHeader({ alg: "HS256", kid: KEY_ID })
+    .setIssuedAt()
+    .setExpirationTime(`${ttlSeconds}s`)
+    .sign(secretKey);
 }
 
 export async function GET(
@@ -34,7 +31,7 @@ export async function GET(
       );
     }
 
-    const token = signPlaybackToken(playbackId);
+    const token = await signPlaybackToken(playbackId);
     const signedUrl = `https://stream.mux.com/${playbackId}.m3u8?token=${token}`;
 
     // Return BOTH to keep the client flexible

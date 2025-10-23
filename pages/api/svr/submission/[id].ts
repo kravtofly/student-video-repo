@@ -1,5 +1,5 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
-import { supabaseAdmin } from '@lib/supabase';
+import { supabaseAdmin } from '@lib/supabaseAdmin';
 import { withCORS } from '@lib/cors';
 import { signMuxPlaybackToken } from '@lib/mux/signPlaybackToken';
 
@@ -20,7 +20,7 @@ export default withCORS(async function handler(req: NextApiRequest, res: NextApi
   const playbackId: string | undefined = video.mux_playback_id || video.playback_id;
   if (!playbackId) { res.status(400).json({ error: 'Missing playback id' }); return; }
 
-  const playbackToken = signMuxPlaybackToken(playbackId);
+  const playbackToken = await signMuxPlaybackToken(playbackId);
   res.status(200).json({ submission: video, playbackToken });
   return;
 });

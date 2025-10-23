@@ -1,6 +1,6 @@
 // pages/api/svr/mark-reviewed.ts
 import type { NextApiRequest, NextApiResponse } from 'next';
-import { supabaseAdmin } from '@lib/supabase';
+import { supabaseAdmin } from '@lib/supabaseAdmin';
 import { withCORS } from '@lib/cors';
 
 type Json = Record<string, any>;

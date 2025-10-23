@@ -1,7 +1,7 @@
 // pages/api/student/magic/start.ts
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { withCORS } from '@lib/cors';
-import { supabaseAdmin } from '@lib/supabase';
+import { supabaseAdmin } from '@lib/supabaseAdmin';
 import { SignJWT } from 'jose';
 
 const JWT_SECRET = new TextEncoder().encode(process.env.SVR_JWT_SECRET || '');

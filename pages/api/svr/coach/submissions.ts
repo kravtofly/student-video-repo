@@ -1,5 +1,5 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
-import { supabaseAdmin } from '@lib/supabase';
+import { supabaseAdmin } from '@lib/supabaseAdmin';
 import { withCORS } from '@lib/cors';
 
 export default withCORS(async function handler(req: NextApiRequest, res: NextApiResponse) {

@@ -2,7 +2,7 @@
 import { NextRequest } from "next/server";
 import Stripe from "stripe";
 import crypto from "node:crypto";
-import { supabaseAdmin } from "@/lib/supabase"; // used to look up coach data
+import { supabaseAdmin } from "@/lib/supabaseAdmin"; // used to look up coach data
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";

@@ -2,15 +2,13 @@
 import type { NextRequest } from "next/server";
 import { NextResponse } from "next/server";
 import Stripe from "stripe";
-import { supabaseAdmin } from "@/lib/supabase";
+import { supabaseAdmin } from "@/lib/supabaseAdmin";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-const STRIPE_SECRET_KEY = process.env.STRIPE_SECRET_KEY!;
 const WEBHOOK_SECRET = process.env.STRIPE_WEBHOOK_SECRET_REVIEW!;
 
-// Match the SDK's accepted version union for TS
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!);
 
 // Stripe needs the RAW body for signature verification

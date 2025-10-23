@@ -1,7 +1,7 @@
 // pages/api/student/my-reviews.ts
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { withCORS } from '@lib/cors';
-import { supabaseAdmin } from '@lib/supabase';
+import { supabaseAdmin } from '@lib/supabaseAdmin';
 import { jwtVerify } from 'jose';
 
 const SECRET = new TextEncoder().encode(process.env.SVR_JWT_SECRET || '');
