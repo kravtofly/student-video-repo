@@ -24,12 +24,12 @@ export default withCORS(async function handler(req: NextApiRequest, res: NextApi
       res.status(400).json({ error: 'Invalid payload' }); return;
     }
 
-    // Load the video + joined review_order to verify ownership via id or email
+    // Load the video with OPTIONAL review_order join (supports videos with or without orders)
     const { data: vid, error: vErr } = await supabaseAdmin
       .from('videos')
       .select(`
-        id, coach_id, review_order_id,
-        review_orders!inner(id, coach_email, coach_id)
+        id, coach_id, coach_ref, review_order_id,
+        review_orders(id, coach_email, coach_id)
       `)
       .eq('id', videoId)
       .single();
@@ -37,9 +37,12 @@ export default withCORS(async function handler(req: NextApiRequest, res: NextApi
     if (vErr || !vid) { res.status(404).json({ error: 'Video not found' }); return; }
 
     const joined = (vid as any).review_orders as { coach_email?: string; coach_id?: string } | null;
+
+    // Flexible authorization: check review_order OR direct coach assignment OR coach_ref
     const owns =
       (coachId && vid.coach_id === coachId) ||
-      (coachEmail && joined && joined.coach_email === coachEmail);
+      (coachEmail && joined && joined.coach_email === coachEmail) ||
+      (coachEmail && (vid as any).coach_ref === coachEmail);
 
     if (!owns) { res.status(403).json({ error: 'Forbidden' }); return; }
 
