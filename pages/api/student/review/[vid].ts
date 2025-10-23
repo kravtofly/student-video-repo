@@ -7,12 +7,15 @@ export default withCORS(async function handler(req: NextApiRequest, res: NextApi
   if (req.method !== 'GET') { res.status(405).end(); return; }
 
   // Accept either ?vid or ?id based on filename/usage
-  const videoId =
+  const rawVideoId =
     (req.query.vid as string) ||
     (req.query.id as string) ||
     '';
 
-  if (!videoId) { res.status(400).json({ error: 'Missing video id' }); return; }
+  if (!rawVideoId) { res.status(400).json({ error: 'Missing video id' }); return; }
+
+  // Defensive: strip any query params that might be incorrectly attached
+  const videoId = rawVideoId.split('?')[0].trim();
 
   // (Optional) If you want to require a magic-link token header, uncomment:
   // const auth = req.headers.authorization || '';
