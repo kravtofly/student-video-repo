@@ -43,7 +43,13 @@ export default async function Page(props: {
   params: { submissionId: string };
   searchParams?: Record<string, string | string[] | undefined>;
 }) {
-  const submissionId = props.params.submissionId;
+  // Defensive: clean the submissionId in case query params are incorrectly attached
+  const rawSubmissionId = props.params.submissionId;
+  const submissionId = rawSubmissionId.split('?')[0].trim();
+
+  console.log('[review/[submissionId]] rawSubmissionId:', rawSubmissionId);
+  console.log('[review/[submissionId]] cleaned submissionId:', submissionId);
+
   const token =
     (props.searchParams?.token as string | undefined) ?? null;
 
