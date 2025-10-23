@@ -14,10 +14,8 @@
     "@mux/mux-node": "12.7.0",
     "@mux/mux-player-react": "3.5.3",
     "@supabase/supabase-js": "2.57.4",
-    "@types/jsonwebtoken": "^9.0.6",
     "jose": "^5.9.3",
-    "jsonwebtoken": "^9.0.2",
-    "next": "14.2.10",
+    "next": "^14.2.33",
     "react": "18.3.1",
     "react-dom": "18.3.1",
     "stripe": "^14.25.0"
@@ -26,9 +24,9 @@
     "@types/node": "20.11.30",
     "@types/react": "18.2.74",
     "@types/react-dom": "18.2.24",
-    "typescript": "5.6.2",
-    "tailwindcss": "^3.4.10",
+    "autoprefixer": "^10.4.20",
     "postcss": "^8.4.41",
-    "autoprefixer": "^10.4.20"
+    "tailwindcss": "^3.4.10",
+    "typescript": "5.6.2"
   }
 }

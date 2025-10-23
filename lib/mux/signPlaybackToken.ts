@@ -1,21 +1,25 @@
 // lib/mux/signPlaybackToken.ts
-import jwt, { type JwtHeader, type SignOptions, type Secret } from 'jsonwebtoken';
+import { SignJWT } from 'jose';
+import { createPrivateKey } from 'crypto';
 
-export function signMuxPlaybackToken(playbackId: string, ttlSeconds = 60 * 60) {
-  const secret = process.env.MUX_SIGNING_KEY_SECRET;
+function loadPemKey() {
+  let pem = process.env.MUX_SIGNING_PRIVATE_KEY || process.env.MUX_SIGNING_KEY_SECRET || '';
+  if (!pem) throw new Error('MUX_SIGNING_PRIVATE_KEY or MUX_SIGNING_KEY_SECRET not set');
+
+  // Convert escaped \n to real newlines if necessary
+  if (pem.includes('\\n')) pem = pem.replace(/\\n/g, '\n');
+  return createPrivateKey({ key: pem.trim(), format: 'pem' });
+}
+
+export async function signMuxPlaybackToken(playbackId: string, ttlSeconds = 60 * 60) {
   const kid = process.env.MUX_SIGNING_KEY_ID;
+  if (!kid) throw new Error('MUX_SIGNING_KEY_ID not set');
 
-  if (!secret || !kid) {
-    throw new Error('Missing MUX signing env vars');
-  }
+  const keyObj = loadPemKey();
 
-  const exp = Math.floor(Date.now() / 1000) + ttlSeconds;
-
-  // Mux requires RS256 with a PEM private key and a kid header
-  const header: JwtHeader = { alg: 'RS256', kid, typ: 'JWT' };
-  const options: SignOptions = { algorithm: 'RS256', header };
-
-  const payload = { aud: 'v', sub: playbackId, exp };
-
-  return jwt.sign(payload, secret as Secret, options);
+  return new SignJWT({ aud: 'v', sub: playbackId })
+    .setProtectedHeader({ alg: 'RS256', kid })
+    .setIssuedAt()
+    .setExpirationTime(`${ttlSeconds}s`)
+    .sign(keyObj as any);
 }

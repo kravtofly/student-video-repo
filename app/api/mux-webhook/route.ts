@@ -1,7 +1,7 @@
 // app/api/mux-webhook/route.ts
 import type { NextRequest } from "next/server";
 import crypto from "node:crypto";
-import { supabaseAdmin } from "@/lib/supabase";
+import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { video } from "@/lib/mux"; // uses MUX_TOKEN_ID/SECRET
 
 export const runtime = "nodejs";

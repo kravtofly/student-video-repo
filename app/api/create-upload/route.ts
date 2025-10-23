@@ -1,7 +1,7 @@
 // app/api/create-upload/route.ts
 import type { NextRequest } from "next/server";
 import { video } from "@/lib/mux";
-import { supabaseAdmin } from "@/lib/supabase";
+import { supabaseAdmin } from "@/lib/supabaseAdmin";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -13,14 +13,18 @@ type Body = {
   ownerName?: string;
   ownerEmail?: string;
   coachRef?: string;
+  coachId?: string;       // ADDED: match uploadForm
   kind?: "review" | "lab" | string;
+  weekNumber?: number;    // ADDED: match uploadForm
+  level?: string;         // ADDED: match uploadForm
+  disciplines?: string[]; // ADDED: match uploadForm (array)
 
-  // NEW questionnaire fields
-  description?: string;   // NEW
-  discipline?: string;    // NEW
-  workingWell?: string;   // NEW
-  struggling?: string;    // NEW
-  otherInfo?: string;     // NEW
+  // Questionnaire fields
+  description?: string;
+  discipline?: string;    // Keep for backward compatibility
+  workingWell?: string;
+  struggling?: string;
+  otherInfo?: string;
 };
 
 function ok(json: any, status = 200) {
@@ -39,9 +43,13 @@ export async function POST(req: NextRequest) {
       ownerName,
       ownerEmail,
       coachRef,
+      coachId,
       kind = "review",
+      weekNumber,
+      level,
+      disciplines,
 
-      // NEW
+      // Questionnaire fields
       description,
       discipline,
       workingWell,
@@ -64,7 +72,7 @@ export async function POST(req: NextRequest) {
     }
 
     const upload = await video.uploads.create({
-      cors_origin: "https://www.kravtofly.com",
+      cors_origin: process.env.MUX_CORS_ORIGIN || "https://www.kravtofly.com",
       new_asset_settings: {
         playback_policy: ["signed"],
         passthrough: JSON.stringify({ r: reviewOrderId, t: uploadToken, v: 1 }),
@@ -84,19 +92,22 @@ export async function POST(req: NextRequest) {
           review_order_id: reviewOrderId,
           owner_name: ownerName ?? null,
           owner_email: ownerEmail ?? null,
-          coach_ref: coachRef ?? null,
+          coach_ref: coachRef ?? coachId ?? null, // Accept either coachRef or coachId
+          week_number: weekNumber ?? null,        // ADDED
+          level: level ?? null,                   // ADDED
+          disciplines: disciplines ?? null,       // ADDED (array)
 
-          // NEW first-class columns
+          // Questionnaire columns
           description: description ?? null,
-          discipline: discipline ?? null,
+          discipline: discipline ?? null,         // singular for backward compatibility
           working_well: workingWell ?? null,
           struggling: struggling ?? null,
           other_info: otherInfo ?? null,
         },
         { onConflict: "upload_id" }
       )
-      .select("id")          // NEW
-      .single();             // NEW
+      .select("id")
+      .single();
 
     if (upErr) {
       console.error("supabase upsert error:", upErr);

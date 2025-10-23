@@ -1,6 +1,7 @@
 // app/api/mux/sign/debug/route.ts
 import type { NextRequest } from "next/server";
-import jwt from "jsonwebtoken";
+import { SignJWT, decodeJwt, decodeProtectedHeader } from "jose";
+import { createPrivateKey } from "crypto";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -46,19 +47,21 @@ export async function GET(req: NextRequest) {
       key.includes("BEGIN PRIVATE KEY") || key.includes("BEGIN RSA PRIVATE KEY");
     if (!hasPem) return J({ error: "BAD_KEY_FORMAT" }, 500);
 
-    // FIXED: Added sub: pid
-    const token = jwt.sign(
-      { aud: "v", sub: pid },
-      key,
-      { algorithm: "RS256", expiresIn: "1h", keyid: keyId }
-    );
+    const keyObj = createPrivateKey({ key, format: "pem" });
 
-    const decoded: any = jwt.decode(token, { complete: true }) || {};
+    const token = await new SignJWT({ aud: "v", sub: pid })
+      .setProtectedHeader({ alg: "RS256", kid: keyId })
+      .setIssuedAt()
+      .setExpirationTime("1h")
+      .sign(keyObj as any);
+
+    const header = decodeProtectedHeader(token);
+    const payload = decodeJwt(token);
 
     return J({
       playbackId: pid,
-      header: decoded.header,
-      payload: decoded.payload,
+      header,
+      payload,
       test_url: `https://stream.mux.com/${pid}.m3u8?token=${token}`
     });
   } catch (e: any) {

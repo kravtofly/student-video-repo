@@ -1,5 +1,6 @@
 // app/coach/page.tsx
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
+import VideoGrid from "./video-grid";
 
 export const revalidate = 60; // refresh list every 60s (ISR)
 
@@ -27,6 +28,3 @@ export default async function CoachPage() {
     </main>
   );
 }
-
-// Import the client component from a sibling file
-import VideoGrid from "./video-grid";

@@ -1,7 +1,7 @@
 // app/review/after-checkout/page.tsx
 import { redirect } from "next/navigation";
 import Stripe from "stripe";
-import { supabaseAdmin } from "@/lib/supabase";
+import { supabaseAdmin } from "@/lib/supabaseAdmin";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
