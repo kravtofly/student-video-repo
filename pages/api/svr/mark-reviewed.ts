@@ -26,6 +26,7 @@ export default withCORS(async function handler(req: NextApiRequest, res: NextApi
         'owner_id',
         'owner_email',
         'coach_id',
+        'coach_ref',
         'review_order_id',
         'reviewed_at',
         'emailed_ready',
@@ -69,12 +70,13 @@ export default withCORS(async function handler(req: NextApiRequest, res: NextApi
     joined = ro ?? null;
   }
 
-  // 3) AuthZ: coach must match by id OR by email (order or profile) ------------
+  // 3) AuthZ: coach must match by id OR by email (order, profile, or coach_ref) ------------
   const owns =
     (coachId && v.coach_id === coachId) ||
     (coachEmail &&
       ((joined?.coach_email && joined.coach_email === coachEmail) ||
-        (coachProfile?.email && coachProfile.email === coachEmail)));
+        (coachProfile?.email && coachProfile.email === coachEmail) ||
+        (v.coach_ref === coachEmail)));
 
   if (!owns) {
     console.log('[mark-reviewed] forbidden', {
@@ -95,9 +97,9 @@ export default withCORS(async function handler(req: NextApiRequest, res: NextApi
   // 5) Optional: timestamped notes --------------------------------------------
   const { data: notes } = await supabaseAdmin
     .from('review_comments')
-    .select('t, text')
+    .select('t_seconds, body')
     .eq('video_id', v.id as string)
-    .order('t', { ascending: true });
+    .order('t_seconds', { ascending: true });
 
   // 6) Ensure reviewed_at set (don’t mark emailed yet) -------------------------
   if (!v.reviewed_at) {
@@ -136,7 +138,7 @@ export default withCORS(async function handler(req: NextApiRequest, res: NextApi
     },
     review: {
       summary: reviewSummary ?? null,
-      timestamped_notes: (notes || []).map((n: any) => ({ t: n.t, text: n.text }))
+      timestamped_notes: (notes || []).map((n: any) => ({ t: n.t_seconds, text: n.body }))
     },
     links: {
       student_review_url: `${process.env.PUBLIC_REVIEW_BASE || 'https://student-video-repo.vercel.app'}/student/review?vid=${v.id}`
