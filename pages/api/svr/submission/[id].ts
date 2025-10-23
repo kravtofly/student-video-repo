@@ -8,10 +8,14 @@ export default withCORS(async function handler(req: NextApiRequest, res: NextApi
 
   // Extract ID and strip any query params that might be incorrectly attached
   const rawId = req.query.id as string;
+  console.log('[submission/[id]] rawId received:', rawId); // DEBUG
+
   if (!rawId) { res.status(400).json({ error: 'id required' }); return; }
 
   // Defensive: strip query params if they're incorrectly included in the route param
   const id = rawId.split('?')[0].trim();
+  console.log('[submission/[id]] cleaned id:', id); // DEBUG
+
   if (!id) { res.status(400).json({ error: 'invalid id' }); return; }
 
   const { data: video, error } = await supabaseAdmin
