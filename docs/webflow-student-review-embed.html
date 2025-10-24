@@ -1,0 +1,246 @@
+<div id="svr-root"></div>
+
+<script type="module">
+const ROOT = document.getElementById('svr-root');
+const API_BASE = 'https://student-video-repo.vercel.app';
+
+function el(html){ const t=document.createElement('template'); t.innerHTML=html.trim(); return t.content.firstChild; }
+function setView(node){ ROOT.innerHTML=''; ROOT.appendChild(node); }
+
+// --- token helpers (supports ?token=... and ?logout=1) ---
+function saveToken(t){ try{ localStorage.setItem('svr_token', t); }catch{} }
+function readToken(){
+  try{
+    const u = new URL(location.href);
+    if (u.searchParams.get('logout') === '1') {
+      try{ localStorage.removeItem('svr_token'); }catch{}
+      u.searchParams.delete('logout'); history.replaceState({},'',u.toString());
+      return null;
+    }
+    const tok = u.searchParams.get('token');
+    if (tok){ saveToken(tok); u.searchParams.delete('token'); history.replaceState({},'',u.toString()); return tok; }
+    return localStorage.getItem('svr_token');
+  }catch{ return null; }
+}
+
+async function api(path){
+  const token = readToken();
+  if (!token) throw new Error('NO_TOKEN');
+  const r = await fetch(`${API_BASE}${path}`, { headers:{ Authorization:`Bearer ${token}` }});
+  const j = await r.json().catch(()=> ({}));
+  if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
+  return j;
+}
+
+async function signPlayback(playbackId){
+  try{
+    const r = await fetch(`${API_BASE}/api/sign-playback?id=${encodeURIComponent(playbackId)}`);
+    if (!r.ok) return null;
+    const j = await r.json().catch(()=> ({}));
+    return j.token || null;
+  }catch{ return null; }
+}
+
+function viewRequestLink(){
+  const node = el(`
+    <div style="max-width:1100px;margin:0 auto;padding:1rem;font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif">
+      <p style="color:#555">Enter your email and we'll email you a secure, one-time link.</p>
+      <form id="svr-form" style="display:flex;gap:8px;margin-top:12px">
+        <input id="svr-email" type="email" required placeholder="you@example.com" style="flex:1;padding:10px 12px;border:1px solid #ccc;border-radius:8px">
+        <button type="submit" style="padding:10px 14px;border-radius:10px;background:#111;color:#fff;border:0;cursor:pointer">Email me a magic link</button>
+      </form>
+      <div id="svr-msg" style="margin-top:12px;color:#0a0"></div>
+    </div>
+  `);
+  node.querySelector('#svr-form').addEventListener('submit', async function(e){
+    e.preventDefault();
+    const email = String(node.querySelector('#svr-email').value || '').trim();
+    const btn = node.querySelector('button');
+    if (!email) return;
+    btn.disabled = true;
+    try{
+      await fetch(`${API_BASE}/api/student/magic/start`, {
+        method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ email })
+      });
+      node.querySelector('#svr-msg').textContent = 'Check your email for the secure link.';
+    }catch{
+      node.querySelector('#svr-msg').textContent = 'If that email exists, a link has been sent.';
+    }finally{ btn.disabled = false; }
+  });
+  return node;
+}
+
+function viewList(items){
+  const node = el(`
+    <div style="max-width:1100px;margin:0 auto;padding:1rem;font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif">
+      <div id="svr-grid" style="display:flex;flex-direction:column;gap:1rem;margin-top:0"></div>
+      <div id="svr-viewer"></div>
+    </div>
+  `);
+  const grid = node.querySelector('#svr-grid');
+
+  if (!items.length){
+    grid.appendChild(el(`<p style="margin-top:12px;color:#555">No reviews yet. You'll get an email when your coach finishes one.</p>`));
+    return node;
+  }
+
+  items.forEach(function(v){
+    grid.appendChild(el(`
+      <div style="width:100%;border:1px solid #e5e5e5;border-radius:16px;padding:20px;background:white;box-shadow:0 1px 3px rgba(0,0,0,.04)">
+        <div style="font-weight:600;font-size:18px">${v.title || 'Session video'}</div>
+        <div style="font-size:12px;color:#777;margin:6px 0">Reviewed ${new Date(v.reviewedAt).toLocaleString()}</div>
+        <div style="display:flex;gap:8px;margin-top:12px">
+          <button data-id="${v.videoId}" class="svr-open" style="padding:10px 16px;border-radius:8px;background:#111;color:#fff;border:0;cursor:pointer">Open Review</button>
+        </div>
+      </div>
+    `));
+  });
+
+  node.addEventListener('click', async function(e){
+    var btn = e.target && e.target.closest ? e.target.closest('button.svr-open') : null;
+    if (!btn) return;
+    var id = btn.getAttribute('data-id');
+    try{
+      const det = await api(`/api/student/review/${encodeURIComponent(id)}`);
+      await renderViewer(node, det);
+    }catch(err){
+      console.error('[svr] review fetch error', err);
+      alert((err && err.message) || 'Failed to load review');
+    }
+  });
+
+  return node;
+}
+
+// ---------- Coach-style viewer with responsive grid layout ----------
+function formatTime(s){
+  s = Math.max(0, Math.floor(Number(s)||0));
+  const m = Math.floor(s / 60);
+  const ss = String(s % 60).padStart(2, '0');
+  return `${m}:${ss}`;
+}
+
+async function renderViewer(root, det){
+  var v = det.video;
+  var notes = Array.isArray(det.notes) ? det.notes : [];
+  var wrap = root.querySelector('#svr-viewer');
+  wrap.innerHTML = '';
+
+  if (!v.playbackId){
+    wrap.appendChild(el(`<div style="background:#f6f6f6;padding:24px;border-radius:12px;text-align:center">Video is processing… (no playback ID yet)</div>`));
+    return;
+  }
+
+  var token = await signPlayback(v.playbackId);
+
+  // Match coach view: main container with responsive grid
+  var section = el(`
+    <main style="max-width:1100px;margin:0 auto;padding:1rem;font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif">
+      <h1 style="font-size:1.25rem;font-weight:600;margin-bottom:1rem">Your Video Review</h1>
+
+      <!-- Responsive grid: stacks on mobile, side-by-side on desktop -->
+      <div id="grid-container" style="display:grid;gap:1.25rem;align-items:start">
+
+        <!-- Left column: Video player card -->
+        <div style="border-radius:1rem;overflow:hidden;border:1px solid #e5e5e5;background:white">
+          <div style="background:black">
+            <mux-player
+              id="svr-player"
+              style="width:100%;height:auto"
+              stream-type="on-demand"
+              playback-id="${v.playbackId}"
+              ${token ? `playback-token="${token}"` : ''}
+              controls
+              playsinline>
+            </mux-player>
+          </div>
+          <div style="padding:0.5rem;font-size:0.75rem;color:#52525b">${v.title || ''}</div>
+        </div>
+
+        <!-- Right column: Notes & Summary cards -->
+        <div style="display:flex;flex-direction:column;gap:1.25rem">
+
+          <!-- Timestamped Notes card -->
+          <section style="border-radius:1rem;border:1px solid #e5e5e5;padding:1rem;background:white">
+            <h3 style="font-weight:600;margin-bottom:0.5rem">Timestamped Notes</h3>
+            ${notes.length === 0 ? `
+              <p style="color:#71717a">No notes yet.</p>
+            ` : `
+              <ul style="display:flex;flex-direction:column;gap:0.5rem;list-style:none;padding:0;margin:0">
+                ${notes.map(function(n){
+                  var t = Number(n.t || 0);
+                  var text = String(n.text || '').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+                  return `
+                    <li>
+                      <button data-seek="${t}" style="width:100%;text-align:left;padding:0.75rem;border-radius:0.5rem;border:1px solid #e5e5e5;background:white;cursor:pointer;transition:background 0.2s" onmouseover="this.style.background='#f9fafb'" onmouseout="this.style.background='white'">
+                        <span style="font-family:monospace;font-size:0.75rem;margin-right:0.5rem;background:#f4f4f5;padding:0.125rem 0.5rem;border-radius:0.25rem">${formatTime(t)}</span>
+                        <span>${text}</span>
+                      </button>
+                    </li>
+                  `;
+                }).join('')}
+              </ul>
+            `}
+          </section>
+
+          <!-- Coach's Summary card -->
+          <section style="border-radius:1rem;border:1px solid #e5e5e5;padding:1rem;background:white">
+            <h3 style="font-weight:600;margin-bottom:0.5rem">Coach's Summary</h3>
+            ${v.summary ? `
+              <p style="white-space:pre-wrap;color:#3f3f46;line-height:1.5">${String(v.summary).replace(/</g,'&lt;').replace(/>/g,'&gt;')}</p>
+            ` : `
+              <p style="color:#71717a">No summary provided.</p>
+            `}
+          </section>
+
+        </div>
+      </div>
+    </main>
+  `);
+
+  // Apply responsive grid columns via media query
+  const gridContainer = section.querySelector('#grid-container');
+  const applyResponsive = () => {
+    if (window.innerWidth >= 768) {
+      // Desktop: two columns (video 1.2fr, notes 0.8fr)
+      gridContainer.style.gridTemplateColumns = '1.2fr 0.8fr';
+    } else {
+      // Mobile: single column
+      gridContainer.style.gridTemplateColumns = '1fr';
+    }
+  };
+  applyResponsive();
+  window.addEventListener('resize', applyResponsive);
+
+  // Click handler for timestamped notes
+  section.addEventListener('click', function(e){
+    var seekEl = e.target && e.target.closest ? e.target.closest('[data-seek]') : null;
+    if (!seekEl) return;
+    var t = Number(seekEl.getAttribute('data-seek') || '0') || 0;
+    var player = section.querySelector('#svr-player');
+    if (player) {
+      player.currentTime = t;
+      if (player.play) player.play();
+    }
+  });
+
+  wrap.appendChild(section);
+}
+
+async function boot(){
+  try{
+    const token = readToken();
+    if (!token){ setView(viewRequestLink()); return; }
+    const list = await api('/api/student/my-reviews');
+    setView(viewList((list && list.items) ? list.items : []));
+  }catch(err){
+    console.error('[svr] boot error', err);
+    try{ localStorage.removeItem('svr_token'); }catch{}
+    setView(viewRequestLink());
+  }
+}
+
+boot();
+</script>
+
+<script type="module" src="https://cdn.jsdelivr.net/npm/@mux/mux-player"></script>
