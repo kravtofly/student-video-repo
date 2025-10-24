@@ -2,8 +2,11 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { supabaseAdmin } from '@lib/supabaseAdmin';
 import { withCORS } from '@lib/cors';
+import { SignJWT } from 'jose';
 
 type Json = Record<string, any>;
+
+const JWT_SECRET = new TextEncoder().encode(process.env.SVR_JWT_SECRET || '');
 
 export default withCORS(async function handler(req: NextApiRequest, res: NextApiResponse) {
   if (req.method !== 'POST') { res.status(405).end(); return; }
@@ -113,17 +116,36 @@ export default withCORS(async function handler(req: NextApiRequest, res: NextApi
     if (upErr) { res.status(500).json({ error: upErr.message }); return; }
   }
 
-  // 7) Build payload for Make ---------------------------------------------------
+  // 7) Mint student token for direct access --------------------------------------
+  const studentEmail = (studentProfile?.email ?? v.owner_email) as string;
+  const now = Math.floor(Date.now() / 1000);
+  const exp = now + 30 * 24 * 60 * 60; // 30 days (longer than magic link since this is a review notification)
+
+  const studentToken = await new SignJWT({
+    sub: studentEmail,
+    typ: 'svr_magic',
+    videoId: v.id as string  // include videoId so student can be directed to this specific review
+  })
+    .setProtectedHeader({ alg: 'HS256' })
+    .setIssuedAt(now)
+    .setExpirationTime(exp)
+    .setIssuer('student-video-repo')
+    .setAudience('svr-student')
+    .sign(JWT_SECRET);
+
+  // 8) Build payload for Make ---------------------------------------------------
   const student = {
     id: (studentProfile?.id ?? v.owner_id) as string,
     name: studentProfile?.full_name ?? '',
-    email: studentProfile?.email ?? (v.owner_email as string)
+    email: studentEmail
   };
   const coach = {
     id: (coachProfile?.id ?? v.coach_id ?? '') as string,
     name: coachProfile?.full_name ?? '',
     email: coachProfile?.email ?? (joined?.coach_email ?? '')
   };
+
+  const studentPortalUrl = process.env.PUBLIC_STUDENT_PORTAL_URL || 'https://www.kravtofly.com/my-reviews';
 
   const payload = {
     type: 'svr.review.completed',
@@ -141,7 +163,7 @@ export default withCORS(async function handler(req: NextApiRequest, res: NextApi
       timestamped_notes: (notes || []).map((n: any) => ({ t: n.t_seconds, text: n.body }))
     },
     links: {
-      student_review_url: `${process.env.PUBLIC_REVIEW_BASE || 'https://student-video-repo.vercel.app'}/student/review?vid=${v.id}`
+      student_review_url: `${studentPortalUrl}?token=${encodeURIComponent(studentToken)}`
     }
   };
 
@@ -149,7 +171,7 @@ export default withCORS(async function handler(req: NextApiRequest, res: NextApi
     res.status(500).json({ error: 'MAKE_REVIEWED_WEBHOOK_URL not configured' }); return;
   }
 
-  // 8) Send to Make; only mark emailed after 2xx -------------------------------
+  // 9) Send to Make; only mark emailed after 2xx -------------------------------
   try {
     console.log('[mark-reviewed] → Make payload', JSON.stringify(payload));
     const resp = await fetch(process.env.MAKE_REVIEWED_WEBHOOK_URL, {
@@ -170,7 +192,7 @@ export default withCORS(async function handler(req: NextApiRequest, res: NextApi
     res.status(502).json({ error: 'Make webhook error', detail: String(err?.message || err) }); return;
   }
 
-  // 9) Final write-back: emailed + notified ------------------------------------
+  // 10) Final write-back: emailed + notified ------------------------------------
   const { error: finalErr, data: finalVid } = await supabaseAdmin
     .from('videos')
     .update({
