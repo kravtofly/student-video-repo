@@ -166,13 +166,13 @@ async function renderViewer(root, det){
             ${notes.length === 0 ? `
               <p style="color:#71717a;font-size:0.875rem">No notes yet.</p>
             ` : `
-              <ul style="display:flex;flex-direction:column;gap:0.5rem;list-style:none;padding:0;margin:0">
+              <ul style="display:flex;flex-direction:column;gap:0.35rem;list-style:none;padding:0;margin:0">
                 ${notes.map(function(n){
                   var t = Number(n.t || 0);
                   var text = String(n.text || '').replace(/</g,'&lt;').replace(/>/g,'&gt;');
                   return `
                     <li>
-                      <button data-seek="${t}" style="width:100%;text-align:left;padding:0.75rem;border-radius:0.5rem;border:1px solid #e5e5e5;background:white;cursor:pointer;transition:background 0.2s" onmouseover="this.style.background='#f9fafb'" onmouseout="this.style.background='white'">
+                      <button data-seek="${t}" style="width:100%;text-align:left;padding:0.5rem 0.75rem;border-radius:0.5rem;border:1px solid #e5e5e5;background:white;cursor:pointer;transition:background 0.2s" onmouseover="this.style.background='#f9fafb'" onmouseout="this.style.background='white'">
                         <span style="font-family:monospace;font-size:0.7rem;margin-right:0.5rem;background:#f4f4f5;padding:0.125rem 0.5rem;border-radius:0.25rem">${formatTime(t)}</span>
                         <span style="font-size:0.875rem">${text}</span>
                       </button>
