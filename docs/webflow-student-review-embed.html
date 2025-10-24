@@ -43,7 +43,7 @@ async function signPlayback(playbackId){
 
 function viewRequestLink(){
   const node = el(`
-    <div style="max-width:1100px;margin:0 auto;padding:1rem;font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif">
+    <div style="max-width:1600px;margin:0 auto;padding:1rem;font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif">
       <p style="color:#555">Enter your email and we'll email you a secure, one-time link.</p>
       <form id="svr-form" style="display:flex;gap:8px;margin-top:12px">
         <input id="svr-email" type="email" required placeholder="you@example.com" style="flex:1;padding:10px 12px;border:1px solid #ccc;border-radius:8px">
@@ -72,7 +72,7 @@ function viewRequestLink(){
 
 function viewList(items){
   const node = el(`
-    <div style="max-width:1100px;margin:0 auto;padding:1rem;font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif">
+    <div style="max-width:1600px;margin:0 auto;padding:1rem;font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif">
       <div id="svr-grid" style="display:flex;flex-direction:column;gap:1rem;margin-top:0"></div>
       <div id="svr-viewer"></div>
     </div>
@@ -135,8 +135,8 @@ async function renderViewer(root, det){
 
   // Match coach view: main container with responsive grid
   var section = el(`
-    <main style="max-width:1100px;margin:0 auto;padding:1rem;font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif">
-      <h1 style="font-size:1.25rem;font-weight:600;margin-bottom:1rem">Your Video Review</h1>
+    <main style="max-width:1600px;margin:0 auto;padding:1rem;font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif">
+      <h1 style="font-size:1rem;font-weight:600;margin-bottom:1rem">Your Video Review</h1>
 
       <!-- Responsive grid: stacks on mobile, side-by-side on desktop -->
       <div id="grid-container" style="display:grid;gap:1.25rem;align-items:start">
@@ -162,9 +162,9 @@ async function renderViewer(root, det){
 
           <!-- Timestamped Notes card -->
           <section style="border-radius:1rem;border:1px solid #e5e5e5;padding:1rem;background:white">
-            <h3 style="font-weight:600;margin-bottom:0.5rem">Timestamped Notes</h3>
+            <h3 style="font-size:0.875rem;font-weight:600;margin-bottom:0.5rem">Timestamped Notes</h3>
             ${notes.length === 0 ? `
-              <p style="color:#71717a">No notes yet.</p>
+              <p style="color:#71717a;font-size:0.875rem">No notes yet.</p>
             ` : `
               <ul style="display:flex;flex-direction:column;gap:0.5rem;list-style:none;padding:0;margin:0">
                 ${notes.map(function(n){
@@ -173,8 +173,8 @@ async function renderViewer(root, det){
                   return `
                     <li>
                       <button data-seek="${t}" style="width:100%;text-align:left;padding:0.75rem;border-radius:0.5rem;border:1px solid #e5e5e5;background:white;cursor:pointer;transition:background 0.2s" onmouseover="this.style.background='#f9fafb'" onmouseout="this.style.background='white'">
-                        <span style="font-family:monospace;font-size:0.75rem;margin-right:0.5rem;background:#f4f4f5;padding:0.125rem 0.5rem;border-radius:0.25rem">${formatTime(t)}</span>
-                        <span>${text}</span>
+                        <span style="font-family:monospace;font-size:0.7rem;margin-right:0.5rem;background:#f4f4f5;padding:0.125rem 0.5rem;border-radius:0.25rem">${formatTime(t)}</span>
+                        <span style="font-size:0.875rem">${text}</span>
                       </button>
                     </li>
                   `;
@@ -185,11 +185,11 @@ async function renderViewer(root, det){
 
           <!-- Coach's Summary card -->
           <section style="border-radius:1rem;border:1px solid #e5e5e5;padding:1rem;background:white">
-            <h3 style="font-weight:600;margin-bottom:0.5rem">Coach's Summary</h3>
+            <h3 style="font-size:0.875rem;font-weight:600;margin-bottom:0.5rem">Coach's Summary</h3>
             ${v.summary ? `
-              <p style="white-space:pre-wrap;color:#3f3f46;line-height:1.5">${String(v.summary).replace(/</g,'&lt;').replace(/>/g,'&gt;')}</p>
+              <p style="white-space:pre-wrap;color:#3f3f46;line-height:1.5;font-size:0.875rem">${String(v.summary).replace(/</g,'&lt;').replace(/>/g,'&gt;')}</p>
             ` : `
-              <p style="color:#71717a">No summary provided.</p>
+              <p style="color:#71717a;font-size:0.875rem">No summary provided.</p>
             `}
           </section>
 
