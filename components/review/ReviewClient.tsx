@@ -152,8 +152,9 @@ export default function ReviewClient({
 
   /** Fetch notes */
   async function loadNotes() {
+    const tokenParam = apiToken ? `&token=${encodeURIComponent(apiToken)}` : "";
     const res = await fetch(
-      `/api/svr/notes?videoId=${encodeURIComponent(submissionId)}${qsToken}`,
+      `/api/svr/notes?videoId=${encodeURIComponent(submissionId)}${tokenParam}`,
       { cache: "no-store" }
     );
     const json = await res.json();
