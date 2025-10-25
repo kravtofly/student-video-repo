@@ -8,19 +8,37 @@ function el(html){ const t=document.createElement('template'); t.innerHTML=html.
 function setView(node){ ROOT.innerHTML=''; ROOT.appendChild(node); }
 
 // --- token helpers (supports ?token=... and ?logout=1) ---
-function saveToken(t){ try{ localStorage.setItem('svr_token', t); }catch{} }
+// Fallback in-memory storage if localStorage is blocked
+let memoryToken = null;
+
+function saveToken(t){
+  try{ localStorage.setItem('svr_token', t); }catch{}
+  memoryToken = t; // Always save to memory as fallback
+}
+
 function readToken(){
   try{
     const u = new URL(location.href);
     if (u.searchParams.get('logout') === '1') {
       try{ localStorage.removeItem('svr_token'); }catch{}
+      memoryToken = null;
       u.searchParams.delete('logout'); history.replaceState({},'',u.toString());
       return null;
     }
     const tok = u.searchParams.get('token');
-    if (tok){ saveToken(tok); u.searchParams.delete('token'); history.replaceState({},'',u.toString()); return tok; }
-    return localStorage.getItem('svr_token');
-  }catch{ return null; }
+    if (tok){
+      saveToken(tok);
+      u.searchParams.delete('token');
+      history.replaceState({},'',u.toString());
+      return tok;
+    }
+    // Try localStorage first, fallback to memory
+    try{
+      const stored = localStorage.getItem('svr_token');
+      if (stored) return stored;
+    }catch{}
+    return memoryToken;
+  }catch{ return memoryToken; }
 }
 
 async function api(path){
