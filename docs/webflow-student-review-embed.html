@@ -188,12 +188,36 @@ async function renderViewer(root, det){
                 ${notes.map(function(n){
                   var t = Number(n.t || 0);
                   var text = String(n.text || '').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+                  var mediaType = n.media_type || 'text';
+                  var playbackId = n.media_playback_id || '';
+
                   return `
-                    <li>
-                      <button data-seek="${t}" style="width:100%;text-align:left;padding:0.5rem 0.75rem;border-radius:0.5rem;border:1px solid #e5e5e5;background:white;cursor:pointer;transition:background 0.2s" onmouseover="this.style.background='#f9fafb'" onmouseout="this.style.background='white'">
-                        <span style="font-family:monospace;font-size:0.7rem;margin-right:0.5rem;background:#f4f4f5;padding:0.125rem 0.5rem;border-radius:0.25rem">${formatTime(t)}</span>
-                        <span style="font-size:0.875rem">${text}</span>
+                    <li style="border:1px solid #e5e5e5;border-radius:0.5rem;overflow:hidden;background:white">
+                      <button data-seek="${t}" style="width:100%;text-align:left;padding:0.5rem 0.75rem;background:white;border:none;cursor:pointer;transition:background 0.2s;display:flex;align-items:center;gap:0.5rem" onmouseover="this.style.background='#f9fafb'" onmouseout="this.style.background='white'">
+                        <span style="font-family:monospace;font-size:0.7rem;background:#f4f4f5;padding:0.125rem 0.5rem;border-radius:0.25rem">${formatTime(t)}</span>
+                        ${mediaType === 'audio' ? '<span style="font-size:0.7rem">🎤 Audio</span>' : ''}
+                        ${mediaType === 'video' ? '<span style="font-size:0.7rem">🎥 Video</span>' : ''}
+                        ${mediaType === 'text' ? `<span style="font-size:0.875rem">${text}</span>` : ''}
                       </button>
+                      ${playbackId && mediaType === 'audio' ? `
+                        <div style="padding:0 0.75rem 0.75rem">
+                          <audio controls style="width:100%;max-height:40px">
+                            <source src="https://stream.mux.com/${playbackId}.m3u8" type="application/x-mpegURL">
+                            Your browser does not support audio playback.
+                          </audio>
+                        </div>
+                      ` : ''}
+                      ${playbackId && mediaType === 'video' ? `
+                        <div style="padding:0 0.75rem 0.75rem">
+                          <mux-player
+                            style="width:100%;max-height:200px"
+                            stream-type="on-demand"
+                            playback-id="${playbackId}"
+                            controls
+                            playsinline>
+                          </mux-player>
+                        </div>
+                      ` : ''}
                     </li>
                   `;
                 }).join('')}
