@@ -89,7 +89,9 @@ async function handler(req: NextApiRequest, res: NextApiResponse) {
 
     // Create a direct upload URL
     const upload = await mux.video.uploads.create({
-      cors_origin: process.env.MUX_CORS_ORIGIN || '*',
+      cors_origin: process.env.MUX_CORS_ORIGIN ||
+                   process.env.ALLOWED_ORIGINS?.split(',')[0] ||
+                   '*',
       new_asset_settings: {
         playback_policy: ['public'],
         mp4_support: 'standard',
