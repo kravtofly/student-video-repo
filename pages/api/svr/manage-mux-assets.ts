@@ -20,8 +20,12 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
     if (action === 'list') {
       // List all assets with their details
-      const assetsResponse = await mux.video.assets.list({ limit: 100 });
-      const assets = Array.from(assetsResponse);
+      const assets: any[] = [];
+
+      // Iterate through paginated response
+      for await (const asset of mux.video.assets.list({ limit: 100 })) {
+        assets.push(asset);
+      }
 
       const assetDetails = assets.map((asset: any) => {
         let metadata: any = {};
@@ -57,11 +61,10 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       const cutoffDate = new Date();
       cutoffDate.setDate(cutoffDate.getDate() - daysOld);
 
-      const assetsResponse = await mux.video.assets.list({ limit: 100 });
-      const assets = Array.from(assetsResponse);
       const deleted: string[] = [];
 
-      for (const asset of assets) {
+      // Iterate through paginated response
+      for await (const asset of mux.video.assets.list({ limit: 100 })) {
         let metadata: any = {};
         try {
           metadata = asset.passthrough ? JSON.parse(asset.passthrough) : {};
