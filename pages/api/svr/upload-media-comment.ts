@@ -94,7 +94,6 @@ async function handler(req: NextApiRequest, res: NextApiResponse) {
                    '*',
       new_asset_settings: {
         playback_policy: ['public'],
-        mp4_support: 'standard',
       },
     });
 
