@@ -110,6 +110,13 @@ export async function POST(req: NextRequest) {
     } catch {
       /* ignore */
     }
+
+    // Ignore comment uploads (audio/video coach feedback)
+    if (meta.type === 'comment') {
+      console.log('[mux-webhook] Ignoring comment upload:', { type, uploadId: data?.upload_id });
+      return ok({ ok: true, handled: 'ignored_comment', type });
+    }
+
     const reviewOrderId: string | null = meta.reviewOrderId ?? meta.r ?? null;
     const uploadToken: string | null = meta.uploadToken ?? meta.t ?? null;
 
