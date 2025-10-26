@@ -88,6 +88,9 @@ export default function ReviewClient({
   const [recordedChunks, setRecordedChunks] = React.useState<Blob[]>([]);
   const [uploadingMedia, setUploadingMedia] = React.useState(false);
 
+  // Deleting notes state
+  const [deletingNoteId, setDeletingNoteId] = React.useState<string | null>(null);
+
   // effective token we will use (from URL or fetched)
   const [apiToken, setApiToken] = React.useState<string | null>(initialToken);
 
@@ -413,6 +416,43 @@ export default function ReviewClient({
     }
   }
 
+  /** Delete a note/comment */
+  async function deleteNote(noteId: string) {
+    if (!confirm("Are you sure you want to delete this comment?")) {
+      return;
+    }
+
+    const effectiveToken = apiToken || (await ensureToken());
+    if (!effectiveToken) {
+      alert("Failed to delete comment. Missing token.");
+      return;
+    }
+
+    try {
+      setDeletingNoteId(noteId);
+
+      const r = await fetch(`/api/svr/delete-comment?token=${encodeURIComponent(effectiveToken)}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          commentId: noteId,
+          videoId: submissionId,
+        }),
+      });
+
+      const j = await r.json();
+      if (!r.ok || j?.error) throw new Error(j?.error || "Failed to delete comment");
+
+      // Reload notes to reflect deletion
+      await loadNotes();
+    } catch (e: any) {
+      console.error("Failed to delete comment:", e);
+      alert(e?.message || "Failed to delete comment. Check console for details.");
+    } finally {
+      setDeletingNoteId(null);
+    }
+  }
+
   /** Render states */
   if (loading) {
     return <main className="max-w-5xl mx-auto p-6 text-gray-600">Loading…</main>;
@@ -549,24 +589,38 @@ export default function ReviewClient({
                   <li key={n.id}>
                     <div className="rounded-lg border border-gray-200 overflow-hidden">
                       {/* Clickable timestamp header */}
-                      <button
-                        className="w-full text-left px-3 py-2 hover:bg-gray-50 flex items-center gap-2"
-                        onClick={() => {
-                          const player = document.getElementById("player") as any;
-                          if (player && typeof player.currentTime === "number") {
-                            player.currentTime = n.t_seconds;
-                            player.play?.();
-                          }
-                        }}
-                      >
-                        <span className="font-mono text-xs bg-gray-100 px-2 py-0.5 rounded">
-                          {formatTime(n.t_seconds)}
-                        </span>
-                        {n.media_type === "audio" && <span className="text-xs">🎤 Audio</span>}
-                        {n.media_type === "video" && <span className="text-xs">🎥 Video</span>}
-                        {n.media_type === "text" && <span className="text-sm">{n.body}</span>}
-                        {!n.media_type && <span className="text-sm">{n.body}</span>}
-                      </button>
+                      <div className="flex items-center">
+                        <button
+                          className="flex-1 text-left px-3 py-2 hover:bg-gray-50 flex items-center gap-2"
+                          onClick={() => {
+                            const player = document.getElementById("player") as any;
+                            if (player && typeof player.currentTime === "number") {
+                              player.currentTime = n.t_seconds;
+                              player.play?.();
+                            }
+                          }}
+                        >
+                          <span className="font-mono text-xs bg-gray-100 px-2 py-0.5 rounded">
+                            {formatTime(n.t_seconds)}
+                          </span>
+                          {n.media_type === "audio" && <span className="text-xs">🎤 Audio</span>}
+                          {n.media_type === "video" && <span className="text-xs">🎥 Video</span>}
+                          {n.media_type === "text" && <span className="text-sm">{n.body}</span>}
+                          {!n.media_type && <span className="text-sm">{n.body}</span>}
+                        </button>
+
+                        {/* Delete button (coach only) */}
+                        {!readOnly && (
+                          <button
+                            onClick={() => deleteNote(n.id)}
+                            disabled={deletingNoteId === n.id}
+                            className="px-3 py-2 text-red-600 hover:bg-red-50 disabled:opacity-50 text-sm"
+                            title="Delete comment"
+                          >
+                            {deletingNoteId === n.id ? "..." : "🗑️"}
+                          </button>
+                        )}
+                      </div>
 
                       {/* Audio/Video player */}
                       {n.media_playback_id && n.media_type === "audio" && (
