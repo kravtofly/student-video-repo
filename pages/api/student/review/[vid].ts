@@ -31,19 +31,21 @@ export default withCORS(async function handler(req: NextApiRequest, res: NextApi
   if (vErr) { res.status(500).json({ error: vErr.message }); return; }
   if (!vid) { res.status(404).json({ error: 'Not found' }); return; }
 
-  // 2) Load notes using your actual columns: t_seconds (numeric) and body (text)
+  // 2) Load notes using your actual columns: t_seconds (numeric), body (text), and media fields
   const { data: rawNotes, error: nErr } = await supabaseAdmin
     .from('review_comments')
-    .select('t_seconds, body')
+    .select('t_seconds, body, media_type, media_playback_id')
     .eq('video_id', videoId)
     .order('t_seconds', { ascending: true });
 
   if (nErr) { res.status(500).json({ error: nErr.message }); return; }
 
-  // 3) Normalize to { t, text } for the Webflow embed
+  // 3) Normalize to { t, text, media_type, media_playback_id } for the Webflow embed
   const notes = (rawNotes || []).map((n: any) => ({
     t: Number(n.t_seconds ?? 0),
     text: String(n.body ?? '').trim(),
+    media_type: n.media_type || 'text',
+    media_playback_id: n.media_playback_id || null,
   }));
 
   // 4) Respond
