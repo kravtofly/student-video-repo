@@ -26,6 +26,7 @@ type Note = {
 
 // TS-friendly alias for the mux-player web component
 const MuxPlayer = "mux-player" as any;
+const MuxAudio = "mux-audio" as any;
 
 /** ---------- Helper: note payload that satisfies old & new handlers ---------- */
 function buildNotePayload(args: {
@@ -625,10 +626,11 @@ export default function ReviewClient({
                       {/* Audio/Video player */}
                       {n.media_playback_id && n.media_type === "audio" && (
                         <div className="px-3 pb-3">
-                          <audio controls className="w-full" style={{ maxHeight: "40px" }}>
-                            <source src={`https://stream.mux.com/${n.media_playback_id}.m3u8`} type="application/x-mpegURL" />
-                            Your browser does not support audio playback.
-                          </audio>
+                          <MuxAudio
+                            style={{ width: "100%", height: "50px" }}
+                            playback-id={n.media_playback_id}
+                            controls
+                          />
                         </div>
                       )}
 
