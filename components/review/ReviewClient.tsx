@@ -19,6 +19,9 @@ type Note = {
   t_seconds: number; // server returns canonical seconds here
   body: string;
   created_at: string;
+  // Audio/video comment support
+  media_type?: "text" | "audio" | "video" | null;
+  media_playback_id?: string | null;
 };
 
 // TS-friendly alias for the mux-player web component
@@ -77,6 +80,13 @@ export default function ReviewClient({
   // Inline "add note" UI
   const [noteText, setNoteText] = React.useState("");
   const [savingNote, setSavingNote] = React.useState(false);
+
+  // Voice/Video recording state
+  const [isRecording, setIsRecording] = React.useState(false);
+  const [recordingType, setRecordingType] = React.useState<"audio" | "video" | null>(null);
+  const [mediaRecorder, setMediaRecorder] = React.useState<MediaRecorder | null>(null);
+  const [recordedChunks, setRecordedChunks] = React.useState<Blob[]>([]);
+  const [uploadingMedia, setUploadingMedia] = React.useState(false);
 
   // effective token we will use (from URL or fetched)
   const [apiToken, setApiToken] = React.useState<string | null>(initialToken);
@@ -252,6 +262,111 @@ export default function ReviewClient({
     alert("Student notified!");
   }
 
+  /** Start recording audio or video */
+  async function startRecording(type: "audio" | "video") {
+    try {
+      const constraints = type === "audio"
+        ? { audio: true }
+        : { audio: true, video: true };
+
+      const stream = await navigator.mediaDevices.getUserMedia(constraints);
+      const recorder = new MediaRecorder(stream, {
+        mimeType: type === "audio"
+          ? "audio/webm"
+          : (MediaRecorder.isTypeSupported("video/webm") ? "video/webm" : "video/mp4")
+      });
+
+      const chunks: Blob[] = [];
+      recorder.ondataavailable = (e) => {
+        if (e.data.size > 0) chunks.push(e.data);
+      };
+
+      recorder.onstop = () => {
+        stream.getTracks().forEach(track => track.stop());
+        setRecordedChunks(chunks);
+      };
+
+      recorder.start();
+      setMediaRecorder(recorder);
+      setIsRecording(true);
+      setRecordingType(type);
+    } catch (err: any) {
+      console.error("Failed to start recording:", err);
+      alert(`Could not access ${type}. Please check your permissions.`);
+    }
+  }
+
+  /** Stop recording */
+  function stopRecording() {
+    if (mediaRecorder && mediaRecorder.state !== "inactive") {
+      mediaRecorder.stop();
+      setIsRecording(false);
+    }
+  }
+
+  /** Cancel recording without saving */
+  function cancelRecording() {
+    if (mediaRecorder && mediaRecorder.state !== "inactive") {
+      mediaRecorder.stop();
+    }
+    setIsRecording(false);
+    setRecordingType(null);
+    setRecordedChunks([]);
+    setMediaRecorder(null);
+  }
+
+  /** Upload recorded media and save as note */
+  async function saveRecordedComment() {
+    if (!recordedChunks.length || !recordingType) return;
+
+    const effectiveToken = apiToken || (await ensureToken());
+    if (!effectiveToken) {
+      alert("Failed to save comment. Missing token.");
+      return;
+    }
+
+    const player = document.getElementById("player") as any;
+    const t = Math.floor((player?.currentTime || 0) as number);
+
+    try {
+      setUploadingMedia(true);
+
+      // Create blob from recorded chunks
+      const blob = new Blob(recordedChunks, {
+        type: recordingType === "audio" ? "audio/webm" : "video/webm"
+      });
+
+      // Upload to Mux via our API
+      const formData = new FormData();
+      formData.append("file", blob, `comment-${Date.now()}.webm`);
+      formData.append("videoId", submissionId);
+      formData.append("timestamp", String(t));
+      formData.append("mediaType", recordingType);
+      formData.append("token", effectiveToken);
+
+      const r = await fetch("/api/svr/upload-media-comment", {
+        method: "POST",
+        body: formData,
+      });
+
+      const j = await r.json();
+      if (!r.ok || j?.error) throw new Error(j?.error || "Failed to upload comment");
+
+      // Clear recording state
+      setRecordedChunks([]);
+      setRecordingType(null);
+      setMediaRecorder(null);
+
+      // Reload notes to show new comment
+      await loadNotes();
+    } catch (e: any) {
+      console.error("Failed to upload media comment:", e);
+      alert(e?.message || "Failed to upload comment. Check console for details.");
+    } finally {
+      setUploadingMedia(false);
+    }
+  }
+
   /** Render states */
   if (loading) {
     return <main className="max-w-5xl mx-auto p-6 text-gray-600">Loading…</main>;
@@ -296,20 +411,82 @@ export default function ReviewClient({
           <div className="p-2 text-xs text-gray-600">{submission.title || ""}</div>
 
           {!readOnly && (
-            <div className="p-3 border-t border-gray-100 bg-white flex gap-2">
-              <input
-                value={noteText}
-                onChange={(e) => setNoteText(e.target.value)}
-                placeholder="Write a quick note…"
-                className="flex-1 min-w-0 px-3 py-2 rounded-lg border border-gray-300"
-              />
-              <button
-                onClick={addNoteAtCurrentTime}
-                disabled={savingNote || !noteText.trim()}
-                className="px-3 py-2 rounded-lg border border-gray-300 bg-[#fafafa] hover:bg-gray-50 disabled:opacity-50"
-              >
-                Save @ current time
-              </button>
+            <div className="p-3 border-t border-gray-100 bg-white">
+              {/* Recording in progress */}
+              {isRecording && (
+                <div className="flex items-center gap-2 p-3 bg-red-50 rounded-lg mb-2">
+                  <div className="w-3 h-3 bg-red-500 rounded-full animate-pulse"></div>
+                  <span className="text-sm text-red-700 font-medium">
+                    Recording {recordingType}...
+                  </span>
+                  <button
+                    onClick={stopRecording}
+                    className="ml-auto px-3 py-1 text-sm rounded-lg bg-red-600 text-white hover:bg-red-700"
+                  >
+                    Stop
+                  </button>
+                </div>
+              )}
+
+              {/* Preview recorded media */}
+              {!isRecording && recordedChunks.length > 0 && (
+                <div className="flex items-center gap-2 p-3 bg-blue-50 rounded-lg mb-2">
+                  <span className="text-sm text-blue-700">
+                    {recordingType === "audio" ? "🎤" : "🎥"} {recordingType} recorded
+                  </span>
+                  <button
+                    onClick={saveRecordedComment}
+                    disabled={uploadingMedia}
+                    className="ml-auto px-3 py-1 text-sm rounded-lg bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50"
+                  >
+                    {uploadingMedia ? "Uploading..." : "Save @ current time"}
+                  </button>
+                  <button
+                    onClick={cancelRecording}
+                    disabled={uploadingMedia}
+                    className="px-3 py-1 text-sm rounded-lg border border-gray-300 bg-white hover:bg-gray-50 disabled:opacity-50"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              )}
+
+              {/* Text note input */}
+              {!isRecording && recordedChunks.length === 0 && (
+                <>
+                  <div className="flex gap-2 mb-2">
+                    <input
+                      value={noteText}
+                      onChange={(e) => setNoteText(e.target.value)}
+                      placeholder="Write a quick note…"
+                      className="flex-1 min-w-0 px-3 py-2 rounded-lg border border-gray-300"
+                    />
+                    <button
+                      onClick={addNoteAtCurrentTime}
+                      disabled={savingNote || !noteText.trim()}
+                      className="px-3 py-2 rounded-lg border border-gray-300 bg-[#fafafa] hover:bg-gray-50 disabled:opacity-50"
+                    >
+                      Save @ current time
+                    </button>
+                  </div>
+
+                  {/* Audio/Video buttons */}
+                  <div className="flex gap-2">
+                    <button
+                      onClick={() => startRecording("audio")}
+                      className="flex-1 px-3 py-2 text-sm rounded-lg border border-gray-300 bg-white hover:bg-gray-50 flex items-center justify-center gap-2"
+                    >
+                      🎤 Record Audio
+                    </button>
+                    <button
+                      onClick={() => startRecording("video")}
+                      className="flex-1 px-3 py-2 text-sm rounded-lg border border-gray-300 bg-white hover:bg-gray-50 flex items-center justify-center gap-2"
+                    >
+                      🎥 Record Video
+                    </button>
+                  </div>
+                </>
+              )}
             </div>
           )}
         </div>
@@ -324,21 +501,49 @@ export default function ReviewClient({
               <ul className="space-y-2">
                 {notes.map((n) => (
                   <li key={n.id}>
-                    <button
-                      className="w-full text-left px-3 py-2 rounded-lg border border-gray-200 hover:bg-gray-50"
-                      onClick={() => {
-                        const player = document.getElementById("player") as any;
-                        if (player && typeof player.currentTime === "number") {
-                          player.currentTime = n.t_seconds;
-                          player.play?.();
-                        }
-                      }}
-                    >
-                      <span className="font-mono text-xs mr-2 bg-gray-100 px-2 py-0.5 rounded">
-                        {formatTime(n.t_seconds)}
-                      </span>
-                      <span>{n.body}</span>
-                    </button>
+                    <div className="rounded-lg border border-gray-200 overflow-hidden">
+                      {/* Clickable timestamp header */}
+                      <button
+                        className="w-full text-left px-3 py-2 hover:bg-gray-50 flex items-center gap-2"
+                        onClick={() => {
+                          const player = document.getElementById("player") as any;
+                          if (player && typeof player.currentTime === "number") {
+                            player.currentTime = n.t_seconds;
+                            player.play?.();
+                          }
+                        }}
+                      >
+                        <span className="font-mono text-xs bg-gray-100 px-2 py-0.5 rounded">
+                          {formatTime(n.t_seconds)}
+                        </span>
+                        {n.media_type === "audio" && <span className="text-xs">🎤 Audio</span>}
+                        {n.media_type === "video" && <span className="text-xs">🎥 Video</span>}
+                        {n.media_type === "text" && <span className="text-sm">{n.body}</span>}
+                        {!n.media_type && <span className="text-sm">{n.body}</span>}
+                      </button>
+
+                      {/* Audio/Video player */}
+                      {n.media_playback_id && n.media_type === "audio" && (
+                        <div className="px-3 pb-3">
+                          <audio controls className="w-full" style={{ maxHeight: "40px" }}>
+                            <source src={`https://stream.mux.com/${n.media_playback_id}.m3u8`} type="application/x-mpegURL" />
+                            Your browser does not support audio playback.
+                          </audio>
+                        </div>
+                      )}
+
+                      {n.media_playback_id && n.media_type === "video" && (
+                        <div className="px-3 pb-3">
+                          <MuxPlayer
+                            style={{ width: "100%", maxHeight: "200px" }}
+                            stream-type="on-demand"
+                            playback-id={n.media_playback_id}
+                            controls
+                            playsinline
+                          />
+                        </div>
+                      )}
+                    </div>
                   </li>
                 ))}
               </ul>
