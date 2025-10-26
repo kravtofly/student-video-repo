@@ -336,21 +336,67 @@ export default function ReviewClient({
         type: recordingType === "audio" ? "audio/webm" : "video/webm"
       });
 
-      // Upload to Mux via our API
-      const formData = new FormData();
-      formData.append("file", blob, `comment-${Date.now()}.webm`);
-      formData.append("videoId", submissionId);
-      formData.append("timestamp", String(t));
-      formData.append("mediaType", recordingType);
-      formData.append("token", effectiveToken);
-
-      const r = await fetch("/api/svr/upload-media-comment", {
+      // Step 1: Get direct upload URL from Mux
+      const createRes = await fetch("/api/svr/create-comment-upload", {
         method: "POST",
-        body: formData,
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          videoId: submissionId,
+          timestamp: t,
+          mediaType: recordingType,
+          token: effectiveToken,
+        }),
       });
 
-      const j = await r.json();
-      if (!r.ok || j?.error) throw new Error(j?.error || "Failed to upload comment");
+      const createData = await createRes.json();
+      if (!createRes.ok || createData?.error) {
+        throw new Error(createData?.error || "Failed to create upload");
+      }
+
+      const { uploadUrl, uploadId } = createData;
+
+      // Step 2: Upload directly to Mux
+      const uploadRes = await fetch(uploadUrl, {
+        method: "PUT",
+        body: blob,
+      });
+
+      if (!uploadRes.ok) {
+        throw new Error("Failed to upload to Mux");
+      }
+
+      // Step 3: Poll for processing completion
+      let retries = 0;
+      const maxRetries = 30; // 30 seconds max wait
+
+      while (retries < maxRetries) {
+        await new Promise(resolve => setTimeout(resolve, 1000)); // Wait 1 second
+
+        const saveRes = await fetch("/api/svr/save-comment", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ uploadId }),
+        });
+
+        const saveData = await saveRes.json();
+
+        if (saveRes.status === 202) {
+          // Still processing, continue polling
+          retries++;
+          continue;
+        }
+
+        if (!saveRes.ok || saveData?.error) {
+          throw new Error(saveData?.error || "Failed to save comment");
+        }
+
+        // Success!
+        break;
+      }
+
+      if (retries >= maxRetries) {
+        throw new Error("Upload is taking longer than expected. It may still complete in the background.");
+      }
 
       // Clear recording state
       setRecordedChunks([]);
