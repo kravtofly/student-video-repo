@@ -72,7 +72,9 @@ export async function POST(req: NextRequest) {
     }
 
     const upload = await video.uploads.create({
-      cors_origin: process.env.MUX_CORS_ORIGIN || "https://www.kravtofly.com",
+      cors_origin: process.env.MUX_CORS_ORIGIN ||
+                   process.env.ALLOWED_ORIGINS?.split(',')[0] ||
+                   "https://www.kravtofly.com",
       new_asset_settings: {
         playback_policy: ["signed"],
         passthrough: JSON.stringify({ r: reviewOrderId, t: uploadToken, v: 1 }),

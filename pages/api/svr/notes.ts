@@ -9,7 +9,7 @@ export default withCORS(async function handler(req: NextApiRequest, res: NextApi
 
     const { data, error } = await supabaseAdmin
       .from('review_comments')
-      .select('id, video_id, coach_id, t_seconds, body, created_at')
+      .select('id, video_id, coach_id, t_seconds, body, created_at, media_type, media_playback_id')
       .eq('video_id', videoId)
       .order('t_seconds', { ascending: true });
 
