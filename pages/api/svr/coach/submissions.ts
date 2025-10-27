@@ -41,7 +41,14 @@ export default withCORS(async function handler(req: NextApiRequest, res: NextApi
         const reviewOrder = Array.isArray(v.review_orders) ? v.review_orders[0] : v.review_orders;
         return reviewOrder?.offer_type === 'deep';
       });
+    } else if (offerType) {
+      // For any other specific offer type (e.g., 'flight_labs'), filter exactly
+      filtered = filtered.filter((v: any) => {
+        const reviewOrder = Array.isArray(v.review_orders) ? v.review_orders[0] : v.review_orders;
+        return reviewOrder?.offer_type === offerType;
+      });
     }
+    // If offerType is empty/null, don't filter (return all)
 
     // Clean up the response to remove the nested review_orders
     const cleanData = filtered.map((v: any) => ({
@@ -79,7 +86,11 @@ export default withCORS(async function handler(req: NextApiRequest, res: NextApi
       filteredOrders = filteredOrders.filter(o => !o.offer_type || o.offer_type === 'quick');
     } else if (offerType === 'deep') {
       filteredOrders = filteredOrders.filter(o => o.offer_type === 'deep');
+    } else if (offerType) {
+      // For any other specific offer type (e.g., 'flight_labs'), filter exactly
+      filteredOrders = filteredOrders.filter(o => o.offer_type === offerType);
     }
+    // If offerType is empty/null, don't filter (return all)
 
     const orderIds = filteredOrders.map(o => o.id);
     if (!orderIds.length) { res.status(200).json({ submissions: [] }); return; }
@@ -110,7 +121,11 @@ export default withCORS(async function handler(req: NextApiRequest, res: NextApi
       filteredOrders = filteredOrders.filter(o => !o.offer_type || o.offer_type === 'quick');
     } else if (offerType === 'deep') {
       filteredOrders = filteredOrders.filter(o => o.offer_type === 'deep');
+    } else if (offerType) {
+      // For any other specific offer type (e.g., 'flight_labs'), filter exactly
+      filteredOrders = filteredOrders.filter(o => o.offer_type === offerType);
     }
+    // If offerType is empty/null, don't filter (return all)
 
     const orderIds = filteredOrders.map(o => o.id);
     if (!orderIds.length) { res.status(200).json({ submissions: [] }); return; }
