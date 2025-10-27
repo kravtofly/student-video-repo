@@ -6,29 +6,58 @@
 <!-- ============================================ -->
 <!-- TAB 1: QUICK REVIEW -->
 <!-- ============================================ -->
-<div id="quick-review-dashboard"></div>
+<div id="quick-review-dashboard">
+  <p style="color:#666;padding:20px">Loading...</p>
+</div>
 
 <script>
 (async function() {
   const API_BASE = 'https://student-video-repo.vercel.app';
 
+  // Wait for Memberstack to be ready
+  const waitForMemberstack = () => {
+    return new Promise((resolve) => {
+      if (window.$memberstackDom) {
+        resolve();
+      } else {
+        const interval = setInterval(() => {
+          if (window.$memberstackDom) {
+            clearInterval(interval);
+            resolve();
+          }
+        }, 100);
+      }
+    });
+  };
+
+  await waitForMemberstack();
+
   // Get coach email from Memberstack
   let coachEmail = '';
   try {
     const member = await window.$memberstackDom.getCurrentMember();
+    console.log('Memberstack member:', member); // Debug log
     coachEmail = member?.data?.email || '';
   } catch(e) {
     console.error('Failed to get Memberstack member:', e);
   }
 
   if (!coachEmail) {
-    document.getElementById('quick-review-dashboard').innerHTML = '<p style="color:#d00;padding:20px">Please log in to view your dashboard.</p>';
+    document.getElementById('quick-review-dashboard').innerHTML = '<p style="color:#d00;padding:20px">Please log in to view your dashboard. (No email found)</p>';
+    console.error('No coach email found. Member object:', member);
     return;
   }
 
+  console.log('Coach email:', coachEmail); // Debug log
+
   try {
-    const res = await fetch(`${API_BASE}/api/svr/coach/submissions?coachEmail=${encodeURIComponent(coachEmail)}&offerType=quick`);
+    const url = `${API_BASE}/api/svr/coach/submissions?coachEmail=${encodeURIComponent(coachEmail)}&offerType=quick`;
+    console.log('Fetching:', url); // Debug log
+
+    const res = await fetch(url);
     const data = await res.json();
+
+    console.log('API response:', data); // Debug log
 
     const container = document.getElementById('quick-review-dashboard');
 
