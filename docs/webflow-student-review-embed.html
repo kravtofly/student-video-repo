@@ -106,7 +106,7 @@ function viewList(items){
     grid.appendChild(el(`
       <div style="border:1px solid #e5e5e5;border-radius:16px;padding:20px;background:white;box-shadow:0 1px 3px rgba(0,0,0,.04);text-align:center">
         <div style="font-weight:600;font-size:18px">${v.title || 'Session video'}</div>
-        <div style="font-size:12px;color:#777;margin:6px 0">Reviewed by ${v.coachName || 'Coach'}, ${new Date(v.reviewedAt).toLocaleString()}</div>
+        <div style="font-size:12px;color:#777;margin:6px 0">Reviewed by ${v.coachName || 'Coach'}, ${new Date(v.reviewedAt).toLocaleDateString()}</div>
         <div style="display:flex;justify-content:center;margin-top:16px">
           <button data-id="${v.videoId}" class="svr-open" style="padding:10px 16px;border-radius:8px;background:#111;color:#fff;border:0;cursor:pointer">Open Review</button>
         </div>
