@@ -477,7 +477,7 @@ export default function ReviewClient({
 
       <div className="grid gap-5 items-start md:grid-cols-[1.2fr_.8fr]">
         {/* Player */}
-        <div className="rounded-2xl overflow-hidden border border-gray-200 bg-white">
+        <div className="sticky top-4 self-start rounded-2xl overflow-hidden border border-gray-200 bg-white">
           <div className="bg-black">
             {playbackId && playbackToken ? (
               <MuxPlayer
