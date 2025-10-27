@@ -17,21 +17,34 @@ export default withCORS(async function handler(req: NextApiRequest, res: NextApi
   // Case 1: direct by videos.coach_id
   if (coachId) {
     // For coach_id, we need to join with review_orders to filter by offer_type
+    // Use left join to include videos without review_orders
     let query = supabaseAdmin
       .from('videos')
-      .select('id, owner_id, owner_email, owner_name, title, mux_playback_id, playback_id, created_at, reviewed_at, review_summary, status, is_public, review_order_id, review_orders!inner(offer_type)')
+      .select('id, owner_id, owner_email, owner_name, title, mux_playback_id, playback_id, created_at, reviewed_at, review_summary, status, is_public, review_order_id, review_orders(offer_type)')
       .eq('coach_id', coachId);
-
-    if (offerType === 'quick' || offerType === 'deep') {
-      query = query.eq('review_orders.offer_type', offerType);
-    }
 
     const { data, error } = await query.order('created_at', { ascending: false });
 
     if (error) { res.status(500).json({ error: error.message }); return; }
 
+    // Filter in JavaScript to handle NULL offer_type values
+    // Treat NULL/missing offer_type as "quick" for backwards compatibility
+    let filtered = data || [];
+    if (offerType === 'quick') {
+      filtered = filtered.filter((v: any) => {
+        const reviewOrder = Array.isArray(v.review_orders) ? v.review_orders[0] : v.review_orders;
+        const type = reviewOrder?.offer_type;
+        return !type || type === 'quick'; // NULL or 'quick'
+      });
+    } else if (offerType === 'deep') {
+      filtered = filtered.filter((v: any) => {
+        const reviewOrder = Array.isArray(v.review_orders) ? v.review_orders[0] : v.review_orders;
+        return reviewOrder?.offer_type === 'deep';
+      });
+    }
+
     // Clean up the response to remove the nested review_orders
-    const cleanData = (data || []).map((v: any) => ({
+    const cleanData = filtered.map((v: any) => ({
       id: v.id,
       owner_id: v.owner_id,
       owner_email: v.owner_email,
@@ -51,20 +64,24 @@ export default withCORS(async function handler(req: NextApiRequest, res: NextApi
 
   // Case 2: by coachEmail via review_orders
   if (coachEmail) {
-    // get all order ids for this coachEmail, optionally filtered by offer_type
+    // Get all orders for this coachEmail with offer_type info
     let ordersQuery = supabaseAdmin
       .from('review_orders')
-      .select('id')
+      .select('id, offer_type')
       .eq('coach_email', coachEmail);
 
-    if (offerType === 'quick' || offerType === 'deep') {
-      ordersQuery = ordersQuery.eq('offer_type', offerType);
+    const { data: orders, error: oErr } = await ordersQuery;
+    if (oErr) { res.status(500).json({ error: oErr.message }); return; }
+
+    // Filter orders by offer_type, treating NULL as "quick" for backwards compatibility
+    let filteredOrders = orders || [];
+    if (offerType === 'quick') {
+      filteredOrders = filteredOrders.filter(o => !o.offer_type || o.offer_type === 'quick');
+    } else if (offerType === 'deep') {
+      filteredOrders = filteredOrders.filter(o => o.offer_type === 'deep');
     }
 
-    const { data: orders, error: oErr } = await ordersQuery;
-
-    if (oErr) { res.status(500).json({ error: oErr.message }); return; }
-    const orderIds = (orders || []).map(o => o.id);
+    const orderIds = filteredOrders.map(o => o.id);
     if (!orderIds.length) { res.status(200).json({ submissions: [] }); return; }
 
     const { data: vids, error: vErr } = await supabaseAdmin
@@ -81,17 +98,21 @@ export default withCORS(async function handler(req: NextApiRequest, res: NextApi
   if (coachRef) {
     let ordersQuery = supabaseAdmin
       .from('review_orders')
-      .select('id')
+      .select('id, offer_type')
       .eq('coach_id', coachRef); // tweak if you store it under a different column
-
-    if (offerType === 'quick' || offerType === 'deep') {
-      ordersQuery = ordersQuery.eq('offer_type', offerType);
-    }
 
     const { data: orders, error: oErr } = await ordersQuery;
     if (oErr) { res.status(500).json({ error: oErr.message }); return; }
 
-    const orderIds = (orders || []).map(o => o.id);
+    // Filter orders by offer_type, treating NULL as "quick" for backwards compatibility
+    let filteredOrders = orders || [];
+    if (offerType === 'quick') {
+      filteredOrders = filteredOrders.filter(o => !o.offer_type || o.offer_type === 'quick');
+    } else if (offerType === 'deep') {
+      filteredOrders = filteredOrders.filter(o => o.offer_type === 'deep');
+    }
+
+    const orderIds = filteredOrders.map(o => o.id);
     if (!orderIds.length) { res.status(200).json({ submissions: [] }); return; }
 
     const { data: vids, error: vErr } = await supabaseAdmin
