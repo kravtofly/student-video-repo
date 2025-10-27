@@ -91,8 +91,8 @@ function viewRequestLink(){
 function viewList(items){
   const node = el(`
     <div style="max-width:1600px;margin:0 auto;padding:1rem;font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif">
-      <div id="svr-grid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:1rem;margin-top:0"></div>
-      <div id="svr-viewer"></div>
+      <div id="svr-grid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:1.25rem;margin-top:0"></div>
+      <div id="svr-viewer" style="margin-top:2rem"></div>
     </div>
   `);
   const grid = node.querySelector('#svr-grid');
@@ -159,8 +159,8 @@ async function renderViewer(root, det){
       <!-- Responsive grid: stacks on mobile, side-by-side on desktop -->
       <div id="grid-container" style="display:grid;gap:1.25rem;align-items:start">
 
-        <!-- Left column: Video player card -->
-        <div style="border-radius:1rem;overflow:hidden;border:1px solid #e5e5e5;background:white">
+        <!-- Left column: Video player card (sticky) -->
+        <div style="position:sticky;top:1rem;align-self:start;border-radius:1rem;overflow:hidden;border:1px solid #e5e5e5;background:white">
           <div style="background:black">
             <mux-player
               id="svr-player"
@@ -193,11 +193,11 @@ async function renderViewer(root, det){
 
                   return `
                     <li style="border:1px solid #e5e5e5;border-radius:0.5rem;overflow:hidden;background:white">
-                      <button data-seek="${t}" style="width:100%;text-align:left;padding:0.5rem 0.75rem;background:white;border:none;cursor:pointer;transition:background 0.2s;display:flex;align-items:center;gap:0.5rem" onmouseover="this.style.background='#f9fafb'" onmouseout="this.style.background='white'">
+                      <button data-seek="${t}" style="width:100%;text-align:left;padding:0.5rem 0.75rem;background:white;border:none;cursor:pointer;transition:background 0.2s;display:flex;align-items:center;gap:0.5rem;line-height:1.2" onmouseover="this.style.background='#f9fafb'" onmouseout="this.style.background='white'">
                         <span style="font-family:monospace;font-size:0.7rem;background:#f4f4f5;padding:0.125rem 0.5rem;border-radius:0.25rem">${formatTime(t)}</span>
                         ${mediaType === 'audio' ? '<span style="font-size:0.7rem">🎤 Audio</span>' : ''}
                         ${mediaType === 'video' ? '<span style="font-size:0.7rem">🎥 Video</span>' : ''}
-                        ${mediaType === 'text' ? `<span style="font-size:0.875rem">${text}</span>` : ''}
+                        ${mediaType === 'text' ? `<span style="font-size:0.875rem;font-weight:normal">${text}</span>` : ''}
                       </button>
                       ${playbackId && mediaType === 'audio' ? `
                         <div style="padding:0 0.75rem 0.75rem">
