@@ -34,10 +34,11 @@
 
   // Get coach email from Memberstack
   let coachEmail = '';
+  let member = null;
   try {
-    const member = await window.$memberstackDom.getCurrentMember();
+    member = await window.$memberstackDom.getCurrentMember();
     console.log('Memberstack member:', member); // Debug log
-    coachEmail = member?.data?.email || '';
+    coachEmail = member?.data?.auth?.email || '';
   } catch(e) {
     console.error('Failed to get Memberstack member:', e);
   }
@@ -93,17 +94,38 @@
 <!-- ============================================ -->
 <!-- TAB 2: DEEP DIVE + 1-ON-1 -->
 <!-- ============================================ -->
-<div id="deep-dive-dashboard"></div>
+<div id="deep-dive-dashboard">
+  <p style="color:#666;padding:20px">Loading...</p>
+</div>
 
 <script>
 (async function() {
   const API_BASE = 'https://student-video-repo.vercel.app';
 
+  // Wait for Memberstack to be ready
+  const waitForMemberstack = () => {
+    return new Promise((resolve) => {
+      if (window.$memberstackDom) {
+        resolve();
+      } else {
+        const interval = setInterval(() => {
+          if (window.$memberstackDom) {
+            clearInterval(interval);
+            resolve();
+          }
+        }, 100);
+      }
+    });
+  };
+
+  await waitForMemberstack();
+
   // Get coach email from Memberstack
   let coachEmail = '';
+  let member = null;
   try {
-    const member = await window.$memberstackDom.getCurrentMember();
-    coachEmail = member?.data?.email || '';
+    member = await window.$memberstackDom.getCurrentMember();
+    coachEmail = member?.data?.auth?.email || '';
   } catch(e) {
     console.error('Failed to get Memberstack member:', e);
   }
@@ -151,17 +173,38 @@
 <!-- ============================================ -->
 <!-- TAB 3: FLIGHT LABS -->
 <!-- ============================================ -->
-<div id="flight-labs-dashboard"></div>
+<div id="flight-labs-dashboard">
+  <p style="color:#666;padding:20px">Loading...</p>
+</div>
 
 <script>
 (async function() {
   const API_BASE = 'https://student-video-repo.vercel.app';
 
+  // Wait for Memberstack to be ready
+  const waitForMemberstack = () => {
+    return new Promise((resolve) => {
+      if (window.$memberstackDom) {
+        resolve();
+      } else {
+        const interval = setInterval(() => {
+          if (window.$memberstackDom) {
+            clearInterval(interval);
+            resolve();
+          }
+        }, 100);
+      }
+    });
+  };
+
+  await waitForMemberstack();
+
   // Get coach email from Memberstack
   let coachEmail = '';
+  let member = null;
   try {
-    const member = await window.$memberstackDom.getCurrentMember();
-    coachEmail = member?.data?.email || '';
+    member = await window.$memberstackDom.getCurrentMember();
+    coachEmail = member?.data?.auth?.email || '';
   } catch(e) {
     console.error('Failed to get Memberstack member:', e);
   }
