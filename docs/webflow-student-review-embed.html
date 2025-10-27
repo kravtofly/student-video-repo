@@ -204,7 +204,9 @@ async function renderViewer(root, det){
                           <mux-audio
                             style="width:100%;height:50px"
                             playback-id="${playbackId}"
-                            controls>
+                            preload="auto"
+                            controls
+                            onerror="console.error('Mux audio load error:', this.getAttribute('playback-id'))">
                           </mux-audio>
                         </div>
                       ` : ''}
