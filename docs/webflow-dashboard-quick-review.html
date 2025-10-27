@@ -1,0 +1,196 @@
+<!-- ===============================================
+     QUICK REVIEW TAB - Copy this entire block
+     =============================================== -->
+
+<script>
+  window.SVR_API_ORIGIN_QR = 'https://student-video-repo.vercel.app';
+  window.SVR_REVIEW_URL_QR = 'https://student-video-repo.vercel.app/review';
+  window.SVR_OFFER_TYPE_QR = 'quick';
+</script>
+
+<div id="coach-dashboard-wrapper-qr" style="max-width:1200px;margin:0 auto;padding:20px;">
+  <div id="coach-help-qr" style="font:13px/1.5 system-ui,-apple-system,Segoe UI,Roboto,Arial;color:#666;margin-bottom:8px;">
+    If you don't see any videos listed, please verify your email address below.
+  </div>
+  <div id="coach-controls-qr" style="display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin-bottom:24px;"></div>
+  <div id="coach-submissions-qr"></div>
+</div>
+
+<script>
+(async () => {
+  const API_ORIGIN = (window.SVR_API_ORIGIN_QR || '').replace(/\/$/, '');
+  const REVIEW_URL_BASE = (window.SVR_REVIEW_URL_QR || '').replace(/\/$/, '');
+  const OFFER_TYPE = window.SVR_OFFER_TYPE_QR || '';
+  const REVIEW_URL = (id) => `${REVIEW_URL_BASE}/${encodeURIComponent(id)}`;
+
+  const controls = document.getElementById('coach-controls-qr');
+  const container = document.getElementById('coach-submissions-qr');
+
+  async function waitForMemberstack(maxWaitMs = 10000) {
+    const start = Date.now();
+    while (Date.now() - start < maxWaitMs) {
+      if (window.$memberstackDom?.getCurrentMember) {
+        try {
+          const member = await window.$memberstackDom.getCurrentMember();
+          const email = member?.data?.auth?.email;
+          if (email) return { email, version: '2.0' };
+        } catch {}
+      }
+      await new Promise(r => setTimeout(r, 300));
+    }
+    return null;
+  }
+
+  const qs = new URLSearchParams(location.search);
+  const urlEmail = qs.get('coachEmail') || '';
+  const detected = urlEmail || (await waitForMemberstack())?.email || '';
+
+  controls.innerHTML = `
+    <label style="font:14px/1.4 system-ui,-apple-system,Segoe UI,Roboto,Arial;font-weight:500;display:flex;align-items:center;height:40px;">
+      Coach Email:
+    </label>
+    <input
+      id="coach-email-qr"
+      type="email"
+      value="${detected}"
+      placeholder="coach@domain.com"
+      style="padding:0 12px;border:1px solid #ddd;border-radius:8px;min-width:260px;height:40px;font:14px system-ui,-apple-system,Segoe UI,Roboto,Arial;flex:1;max-width:400px;">
+    <button
+      id="load-qr"
+      style="padding:0 20px;border:1px solid #ddd;border-radius:8px;background:#fafafa;height:40px;font:14px system-ui,-apple-system,Segoe UI,Roboto,Arial;font-weight:500;cursor:pointer;white-space:nowrap;transition:background 0.2s;"
+      onmouseover="this.style.background='#f0f0f0'"
+      onmouseout="this.style.background='#fafafa'">
+      Load Submissions
+    </button>
+    <span id="status-qr" style="font:14px system-ui,-apple-system,Segoe UI,Roboto,Arial;color:#666;display:flex;align-items:center;height:40px;"></span>
+  `;
+
+  const emailInput = document.getElementById('coach-email-qr');
+  const loadBtn = document.getElementById('load-qr');
+  const status = document.getElementById('status-qr');
+
+  function escapeHtml(t) {
+    return String(t).replace(/[&<>"']/g, m => (
+      ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'})[m]
+    ));
+  }
+  function fmtDate(s) { try { return new Date(s).toLocaleString(); } catch { return ''; } }
+
+  async function mintReviewToken(videoId, coachEmail) {
+    const url = `${API_ORIGIN}/api/svr/review-token?videoId=${encodeURIComponent(videoId)}&coachEmail=${encodeURIComponent(coachEmail)}`;
+    const r = await fetch(url, { credentials: 'include' });
+    try {
+      const j = await r.json();
+      return r.ok && j?.token ? j.token : null;
+    } catch {
+      return null;
+    }
+  }
+
+  async function loadSubmissions() {
+    const coachEmail = (emailInput.value || '').trim();
+    if (!coachEmail) {
+      container.innerHTML = `<p style="color:#b00;font:14px system-ui,-apple-system,Segoe UI,Roboto,Arial;">⚠️ Please enter a coach email.</p>`;
+      return;
+    }
+
+    loadBtn.disabled = true;
+    loadBtn.style.opacity = '0.6';
+    status.textContent = 'Loading…';
+    container.innerHTML = '<p style="font:14px system-ui,-apple-system,Segoe UI,Roboto,Arial;color:#666;">Fetching your assigned videos...</p>';
+
+    try {
+      const url = `${API_ORIGIN}/api/svr/coach/submissions?coachEmail=${encodeURIComponent(coachEmail)}${OFFER_TYPE ? `&offerType=${encodeURIComponent(OFFER_TYPE)}` : ''}`;
+      const resp = await fetch(url, { credentials: 'include' });
+
+      const text = await resp.text();
+      let data;
+      try { data = JSON.parse(text); }
+      catch {
+        container.innerHTML = `<p style="color:#b00;font:14px system-ui,-apple-system,Segoe UI,Roboto,Arial;">Server returned invalid response. Please try again.</p>`;
+        status.textContent = '';
+        return;
+      }
+
+      if (data?.error) {
+        container.innerHTML = `<p style="color:#b00;font:14px system-ui,-apple-system,Segoe UI,Roboto,Arial;">Error: ${escapeHtml(String(data.error))}</p>`;
+        status.textContent = '';
+        return;
+      }
+
+      const submissions = Array.isArray(data?.submissions) ? data.submissions : [];
+      status.textContent = `${submissions.length} video${submissions.length !== 1 ? 's' : ''} assigned`;
+
+      if (!submissions.length) {
+        container.innerHTML = '<p style="font:14px system-ui,-apple-system,Segoe UI,Roboto,Arial;color:#666;">No videos assigned to you yet.</p>';
+        return;
+      }
+
+      const encEmail = encodeURIComponent(coachEmail);
+      const cards = await Promise.all(submissions.map(async (s) => {
+        const id = s.id || s.submission_id || s.video_id || '';
+        const title = s.title || 'Untitled video';
+        const who = s.owner_name || s.owner_email || s.owner_id || 'Student';
+        const when = s.created_at ? fmtDate(s.created_at) : '';
+        const reviewed = s.reviewed_at
+          ? `<span style="color:#090;font-size:13px;">✅ Reviewed ${new Date(s.reviewed_at).toLocaleDateString()}</span>`
+          : `<span style="color:#c80;font-size:13px;">🟡 Needs review</span>`;
+
+        let href = id ? `${REVIEW_URL(id)}?coachEmail=${encEmail}` : '#';
+        const token = id ? await mintReviewToken(id, coachEmail) : null;
+        if (token) href += `&token=${encodeURIComponent(token)}`;
+
+        return `
+          <div style="padding:20px;border:1px solid #ddd;border-radius:12px;margin:16px 0;display:flex;flex-direction:column;gap:16px;background:#fafafa;">
+            <div style="display:flex;flex-wrap:wrap;justify-content:space-between;align-items:flex-start;gap:16px;">
+              <div style="flex:1;min-width:250px;">
+                <div style="font-weight:600;font-size:16px;margin-bottom:6px;font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial;">${escapeHtml(title)}</div>
+                <div style="font-size:13px;color:#666;margin-bottom:8px;font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial;">${escapeHtml(who)} • ${when}</div>
+                <div>${reviewed}</div>
+              </div>
+
+              <a href="${href}"
+                 target="_blank" rel="noopener"
+                 style="padding:12px 24px;border-radius:8px;border:1px solid #c00;background:#fff;text-decoration:none;color:#c00;font-weight:600;white-space:nowrap;transition:all 0.2s;font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial;font-size:14px;height:fit-content;display:inline-block;"
+                 onmouseover="this.style.background='#c00';this.style.color='#fff';"
+                 onmouseout="this.style.background='#fff';this.style.color='#c00';">
+                Review Video →
+              </a>
+            </div>
+          </div>
+        `;
+      }));
+
+      container.innerHTML = cards.join('');
+
+    } catch (e) {
+      container.innerHTML = `<p style="color:#b00;font:14px system-ui,-apple-system,Segoe UI,Roboto,Arial;">Failed to load submissions. Please check your connection and try again.</p>`;
+    } finally {
+      if (status.textContent === 'Loading…') status.textContent = '';
+      loadBtn.disabled = false;
+      loadBtn.style.opacity = '';
+    }
+  }
+
+  loadBtn.onclick = loadSubmissions;
+
+  if (detected) {
+    loadSubmissions();
+  } else {
+    container.innerHTML = '<p style="font:14px system-ui,-apple-system,Segoe UI,Roboto,Arial;color:#666;">👆 Enter your email above to view assigned videos</p>';
+  }
+})();
+</script>
+
+<style>
+@media (max-width: 768px) {
+  #coach-dashboard-wrapper-qr { padding: 16px !important; }
+  #coach-controls-qr { flex-direction: column !important; align-items: stretch !important; }
+  #coach-controls-qr label { height: auto !important; }
+  #coach-controls-qr input, #coach-controls-qr button { width: 100% !important; max-width: none !important; }
+  #coach-controls-qr span { height: auto !important; text-align: center; }
+}
+@media (max-width: 480px) {
+  #coach-dashboard-wrapper-qr { padding: 12px !important; }
+}
+</style>
